@@ -82,6 +82,7 @@ function createXNATDataSource(config) {
             studyInstanceUid: studyMetadata.StudyInstanceUID,
             seriesInstanceUid: s.SeriesInstanceUID,
             seriesNumber: s.SeriesNumber,
+            description: s.SeriesDescription,  // UI expects 'description', not 'seriesDescription'
             seriesDescription: s.SeriesDescription,
             modality: s.Modality,
             instances: s.instances.length,

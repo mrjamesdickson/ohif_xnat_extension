@@ -152,6 +152,8 @@ class XNATClient {
             return null;
           }
 
+          const modality = this.getModalityFromXsiType(scan.xsiType);
+
           // Get all instances for this series - use full URL with baseUrl
           const instances = files.map((file, index) => ({
             url: `${this.baseUrl}${file.URI}`,
@@ -161,15 +163,17 @@ class XNATClient {
               SeriesNumber: parseInt(scan.ID) || index + 1,
               InstanceNumber: index + 1,
               SOPInstanceUID: `${scan.ID}.${index + 1}`,
-              Modality: scan.modality || 'OT',
+              Modality: modality,
             }
           }));
+
+          console.log(`Scan ${scan.ID}: xsiType=${scan.xsiType}, modality=${modality}, desc=${scan.series_description}`);
 
           return {
             SeriesInstanceUID: scan.ID,
             SeriesNumber: parseInt(scan.ID) || 0,
             SeriesDescription: scan.series_description || scan.type || 'Unknown',
-            Modality: scan.modality || 'OT',
+            Modality: modality,
             instances,
           };
         })
@@ -286,6 +290,7 @@ class XNATClient {
     if (!xsiType) return 'OT';
 
     const typeMap = {
+      // Session types
       'xnat:ctSessionData': 'CT',
       'xnat:mrSessionData': 'MR',
       'xnat:petSessionData': 'PT',
@@ -293,6 +298,14 @@ class XNATClient {
       'xnat:dxSessionData': 'DX',
       'xnat:mgSessionData': 'MG',
       'xnat:usSessionData': 'US',
+      // Scan types
+      'xnat:ctScanData': 'CT',
+      'xnat:mrScanData': 'MR',
+      'xnat:petScanData': 'PT',
+      'xnat:crScanData': 'CR',
+      'xnat:dxScanData': 'DX',
+      'xnat:mgScanData': 'MG',
+      'xnat:usScanData': 'US',
     };
 
     return typeMap[xsiType] || 'OT';
