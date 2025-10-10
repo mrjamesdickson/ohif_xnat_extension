@@ -1,0 +1,40 @@
+{
+  "name": "@ohif/extension-xnat-datasource",
+  "version": "1.0.0",
+  "description": "OHIF extension for pulling and displaying images from XNAT",
+  "author": "OHIF",
+  "license": "MIT",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:copy",
+    "build:copy": "rm -rf dist && mkdir -p dist && cp -r src/* dist/",
+    "dev": "npm run build:copy",
+    "test": "node test-xnat-connection.js",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OHIF/Viewers.git",
+    "directory": "extensions/xnat-datasource"
+  },
+  "peerDependencies": {
+    "@ohif/core": "^3.0.0",
+    "react": "^17.0.0 || ^18.0.0",
+    "react-dom": "^17.0.0 || ^18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dicom-parser": "^1.8.13",
+    "dcmjs": "^0.29.0",
+    "dotenv": "^16.3.1"
+  }
+}

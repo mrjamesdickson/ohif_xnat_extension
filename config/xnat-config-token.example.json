@@ -1,0 +1,16 @@
+{
+  "extensions": [
+    "@ohif/extension-xnat-datasource"
+  ],
+  "dataSources": [
+    {
+      "namespace": "@ohif/extension-xnat-datasource",
+      "sourceName": "xnat",
+      "configuration": {
+        "xnatUrl": "https://your-xnat-instance.org",
+        "token": "your-api-token"
+      }
+    }
+  ],
+  "defaultDataSourceName": "xnat"
+}
