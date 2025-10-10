@@ -8,10 +8,22 @@ An OHIF extension that enables pulling and displaying DICOM images from remote X
 # 1. Configure XNAT credentials interactively
 ./setup-config.sh
 
-# 2. Build and deploy to your OHIF installation
+# 2. Build and deploy to your OHIF installation using npm link
+./deploy-with-npm-link.sh /path/to/ohif-viewer --restart
+
+# This command will:
+# - Build the extension
+# - Link it using npm link
+# - Apply necessary hotfixes
+# - Update pluginConfig.json
+# - Start the dev server with rsbuild (APP_CONFIG=xnat yarn run dev:fast)
+```
+
+**Alternative: Manual build and deploy:**
+```bash
 ./build-and-deploy.sh /path/to/ohif-viewer
 
-# 3. Start OHIF with auto-generated config
+# Then start OHIF with auto-generated config
 cd /path/to/ohif-viewer
 APP_CONFIG=xnat yarn run dev
 ```
@@ -283,7 +295,19 @@ Or use the all-in-one build and deploy script:
 
 ### Local Development
 
-For active development with auto-rebuild:
+**Recommended: Use npm link for live development:**
+
+```bash
+# Deploy with npm link (automatically builds, links, and starts server)
+./deploy-with-npm-link.sh /path/to/ohif-viewer --restart
+```
+
+The dev server will run with:
+- **Command:** `APP_CONFIG=xnat yarn run dev:fast` (uses rsbuild)
+- **Working directory:** `/path/to/ohif-viewer/platform/app`
+- **Logs:** `/tmp/ohif-dev.log`
+
+**Alternative: Manual development workflow:**
 
 ```bash
 # Watch for changes and rebuild
