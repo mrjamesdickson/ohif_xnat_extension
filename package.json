@@ -33,8 +33,11 @@
   },
   "dependencies": {
     "axios": "^1.6.0",
-    "dicom-parser": "^1.8.13",
+    "cors": "^2.8.5",
     "dcmjs": "^0.29.0",
-    "dotenv": "^16.3.1"
+    "dicom-parser": "^1.8.13",
+    "dotenv": "^16.3.1",
+    "express": "^5.1.0",
+    "http-proxy-middleware": "^3.0.5"
   }
 }

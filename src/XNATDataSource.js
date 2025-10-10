@@ -37,7 +37,7 @@ function createXNATDataSource(config) {
   };
 
   /**
-   * Query for studies
+   * Query for studies and series
    */
   const query = {
     studies: {
@@ -58,6 +58,43 @@ function createXNATDataSource(config) {
         }
       },
     },
+    series: {
+      search: async (queryParams = {}) => {
+        console.log('series.search called with params:', queryParams);
+        try {
+          // OHIF passes the experiment ID directly as a string
+          const experimentId = typeof queryParams === 'string' ? queryParams :
+                               queryParams.studyInstanceUid ||
+                               queryParams.StudyInstanceUID ||
+                               queryParams.studyInstanceUIDs?.[0];
+
+          if (!experimentId) {
+            console.warn('No experiment ID provided to series.search, params:', queryParams);
+            return [];
+          }
+
+          // Get the study metadata which includes series
+          const studyMetadata = await client.getStudyMetadata(experimentId);
+          console.log('Study metadata for series search:', studyMetadata);
+
+          // Format series for OHIF WorkList
+          const series = (studyMetadata?.series || []).map(s => ({
+            studyInstanceUid: studyMetadata.StudyInstanceUID,
+            seriesInstanceUid: s.SeriesInstanceUID,
+            seriesNumber: s.SeriesNumber,
+            seriesDescription: s.SeriesDescription,
+            modality: s.Modality,
+            instances: s.instances.length,
+          }));
+
+          console.log('Returning series for WorkList:', series);
+          return series;
+        } catch (error) {
+          console.error('Error querying series:', error);
+          throw error;
+        }
+      },
+    },
   };
 
   /**
@@ -72,10 +109,22 @@ function createXNATDataSource(config) {
    * Retrieve study metadata
    */
   const retrieve = {
+    directURL: async ({ url, headers }) => {
+      console.log('retrieve.directURL called:', url);
+      // Not implemented for XNAT
+      return null;
+    },
+    bulkDataURI: async ({ StudyInstanceUID, BulkDataURI }) => {
+      console.log('retrieve.bulkDataURI called for study:', StudyInstanceUID);
+      // Not implemented for XNAT
+      return null;
+    },
     series: {
       metadata: async ({ StudyInstanceUID, filters } = {}) => {
+        console.log('retrieve.series.metadata called for study:', StudyInstanceUID, 'filters:', filters);
         try {
           const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
+          console.log('Study metadata retrieved:', studyMetadata);
 
           // Format metadata for OHIF
           const naturalizedSeries = (studyMetadata?.series || []).map(series => ({
@@ -89,6 +138,7 @@ function createXNATDataSource(config) {
             })),
           }));
 
+          console.log('Returning naturalized series:', naturalizedSeries);
           return naturalizedSeries;
         } catch (error) {
           console.error('Error retrieving study:', error);
@@ -133,6 +183,15 @@ function createXNATDataSource(config) {
     return { ...config, dicomUploadEnabled: false };
   };
 
+  /**
+   * Get study instance UIDs
+   */
+  const getStudyInstanceUIDs = ({ params, filter } = {}) => {
+    console.log('getStudyInstanceUIDs called with params:', params);
+    // Return empty array - studies are loaded via query.studies.search
+    return Promise.resolve([]);
+  };
+
   return {
     initialize,
     query,
@@ -145,6 +204,7 @@ function createXNATDataSource(config) {
     getImageIdsForInstance,
     getConfig,
     setProjectFilter,
+    getStudyInstanceUIDs,
     getXNATClient: () => client,
   };
 }

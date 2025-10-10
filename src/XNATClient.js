@@ -137,30 +137,31 @@ class XNATClient {
    */
   async getStudyMetadata(experimentId) {
     try {
+      console.log('getStudyMetadata called for experiment:', experimentId);
       const scans = await this.getScans(experimentId);
+      console.log(`Found ${scans.length} scans for experiment ${experimentId}`);
+
       const studyInstanceUID = experimentId; // XNAT experiment ID can map to Study Instance UID
 
       const series = await Promise.all(
         scans.map(async scan => {
           const files = await this.getScanFiles(experimentId, scan.ID);
+          console.log(`Scan ${scan.ID} has ${files?.length || 0} files`);
 
           if (!files || files.length === 0) {
             return null;
           }
 
-          // Download first file to get metadata
-          const firstFile = files[0];
-          const dicomData = await this.downloadDicomFile(firstFile.URI);
-
-          const dataSet = dcmjs.data.DicomMessage.readFile(dicomData);
-          const metadata = dcmjs.data.DicomMetaDictionary.naturalizeDataset(dataSet.dict);
-
-          // Get all instances for this series
+          // Get all instances for this series - use full URL with baseUrl
           const instances = files.map((file, index) => ({
             url: `${this.baseUrl}${file.URI}`,
             metadata: {
-              ...metadata,
+              StudyInstanceUID: experimentId,
+              SeriesInstanceUID: scan.ID,
+              SeriesNumber: parseInt(scan.ID) || index + 1,
               InstanceNumber: index + 1,
+              SOPInstanceUID: `${scan.ID}.${index + 1}`,
+              Modality: scan.modality || 'OT',
             }
           }));
 
@@ -168,16 +169,19 @@ class XNATClient {
             SeriesInstanceUID: scan.ID,
             SeriesNumber: parseInt(scan.ID) || 0,
             SeriesDescription: scan.series_description || scan.type || 'Unknown',
-            Modality: scan.modality || metadata.Modality || 'OT',
+            Modality: scan.modality || 'OT',
             instances,
           };
         })
       );
 
+      const filteredSeries = series.filter(s => s !== null);
+      console.log(`Returning ${filteredSeries.length} series for experiment ${experimentId}`);
+
       return {
         StudyInstanceUID: studyInstanceUID,
         StudyDescription: experimentId,
-        series: series.filter(s => s !== null),
+        series: filteredSeries,
       };
     } catch (error) {
       console.error('Error getting study metadata:', error);
@@ -224,7 +228,19 @@ class XNATClient {
 
       console.log(`Found ${experiments.length} experiments from XNAT`);
 
-      const studies = experiments.map(experiment => {
+      // Filter for imaging sessions only (exclude non-imaging xsiTypes)
+      const imagingExperiments = experiments.filter(exp => {
+        const modality = this.getModalityFromXsiType(exp.xsiType);
+        return modality !== 'OT'; // Exclude "Other" type (non-imaging sessions)
+      });
+
+      console.log(`Filtered to ${imagingExperiments.length} imaging sessions`);
+
+      if (imagingExperiments.length > 0) {
+        console.log('Sample imaging experiment:', imagingExperiments[0]);
+      }
+
+      const studies = imagingExperiments.map(experiment => {
         const modality = String(this.getModalityFromXsiType(experiment.xsiType));
 
         const study = {
