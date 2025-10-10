@@ -6,6 +6,7 @@ import { DicomMetadataStore } from '@ohif/core';
  * Creates a data source that retrieves images from XNAT
  */
 function createXNATDataSource(config) {
+  console.log('createXNATDataSource called with config:', config);
   const client = new XNATClient(config);
   let currentProjectFilter = null;
 

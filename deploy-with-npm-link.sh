@@ -94,8 +94,8 @@ if grep -q '"@ohif/extension-xnat-datasource"' "$PLUGIN_CONFIG"; then
 else
     # Check if jq is available
     if command -v jq &> /dev/null; then
-        # Use jq to add the extension
-        jq '. += [{"packageName": "@ohif/extension-xnat-datasource"}]' "$PLUGIN_CONFIG" > "$PLUGIN_CONFIG.tmp"
+        # Use jq to add the extension to the .extensions array
+        jq '.extensions = [{"packageName": "@ohif/extension-xnat-datasource"}] + .extensions' "$PLUGIN_CONFIG" > "$PLUGIN_CONFIG.tmp"
         mv "$PLUGIN_CONFIG.tmp" "$PLUGIN_CONFIG"
         echo "  Added extension to pluginConfig.json using jq"
     else
@@ -108,8 +108,8 @@ with open('$PLUGIN_CONFIG', 'r') as f:
     config = json.load(f)
 
 entry = {'packageName': '@ohif/extension-xnat-datasource'}
-if entry not in config:
-    config.append(entry)
+if entry not in config.get('extensions', []):
+    config.setdefault('extensions', []).insert(0, entry)
 
 with open('$PLUGIN_CONFIG', 'w') as f:
     json.dump(config, f, indent=2)

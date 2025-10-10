@@ -1,5 +1,11 @@
 import fs from 'fs';
+import path from 'path';
+import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
+import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill';
+import writePluginImportsFile from './platform/app/.webpack/writePluginImportsFile';
 
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const SRC_DIR = path.resolve(__dirname, './platform/app/src');
 const DIST_DIR = path.resolve(__dirname, './platform/app/dist');
 const PUBLIC_DIR = path.resolve(__dirname, './platform/app/public');
