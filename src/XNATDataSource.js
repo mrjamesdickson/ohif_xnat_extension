@@ -86,6 +86,7 @@ function createXNATDataSource(config) {
             seriesDescription: s.SeriesDescription,
             modality: s.Modality,
             instances: s.instances.length,
+            numSeriesInstances: s.instances.length,  // WorkList expects this field name
           }));
 
           console.log('Returning series for WorkList:', series);
