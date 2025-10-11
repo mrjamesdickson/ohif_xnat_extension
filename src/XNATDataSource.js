@@ -1,5 +1,7 @@
 import XNATClient from './XNATClient.js';
-import { DicomMetadataStore } from '@ohif/core';
+import { DicomMetadataStore, classes as OHIFClasses } from '@ohif/core';
+import dicomParser from 'dicom-parser';
+import axios from 'axios';
 
 /**
  * XNAT Data Source for OHIF Viewer
@@ -9,6 +11,7 @@ function createXNATDataSource(config) {
   console.log('createXNATDataSource called with config:', config);
   const client = new XNATClient(config);
   let currentProjectFilter = null;
+  const metadataProvider = OHIFClasses.MetadataProvider;
 
   // Configure the XNAT image loader with credentials
   const XNATImageLoader = require('./XNATImageLoader.js').default;
@@ -19,6 +22,106 @@ function createXNATDataSource(config) {
     token: config.token,
   });
   console.log('✅ XNAT image loader configured with datasource credentials');
+
+  /**
+   * Fetch and parse DICOM metadata from a DICOM file
+   */
+  const fetchDicomMetadata = async (url) => {
+    try {
+      const headers = {
+        'Content-Type': 'application/dicom',
+      };
+
+      if (config.token) {
+        headers['Authorization'] = `Bearer ${config.token}`;
+      } else if (config.username && config.password) {
+        const auth = btoa(`${config.username}:${config.password}`);
+        headers['Authorization'] = `Basic ${auth}`;
+      }
+
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        headers,
+      });
+
+      const arrayBuffer = response.data;
+      const byteArray = new Uint8Array(arrayBuffer);
+      const dataSet = dicomParser.parseDicom(byteArray);
+
+      // Extract comprehensive DICOM metadata
+      const metadata = {
+        // SOP Common Module
+        SOPClassUID: dataSet.string('x00080016'),
+        SOPInstanceUID: dataSet.string('x00080018'),
+
+        // Patient Module
+        PatientName: dataSet.string('x00100010'),
+        PatientID: dataSet.string('x00100020'),
+        PatientBirthDate: dataSet.string('x00100030'),
+        PatientSex: dataSet.string('x00100040'),
+
+        // Study Module
+        StudyInstanceUID: dataSet.string('x0020000d'),
+        StudyDate: dataSet.string('x00080020'),
+        StudyTime: dataSet.string('x00080030'),
+        StudyDescription: dataSet.string('x00081030'),
+        AccessionNumber: dataSet.string('x00080050'),
+
+        // Series Module
+        SeriesInstanceUID: dataSet.string('x0020000e'),
+        SeriesNumber: dataSet.uint16('x00200011'),
+        SeriesDescription: dataSet.string('x0008103e'),
+        SeriesDate: dataSet.string('x00080021'),
+        SeriesTime: dataSet.string('x00080031'),
+        Modality: dataSet.string('x00080060'),
+        ProtocolName: dataSet.string('x00180015'),
+
+        // Image Pixel Module
+        Rows: dataSet.uint16('x00280010'),
+        Columns: dataSet.uint16('x00280011'),
+        BitsAllocated: dataSet.uint16('x00280100'),
+        BitsStored: dataSet.uint16('x00280101'),
+        HighBit: dataSet.uint16('x00280102'),
+        PixelRepresentation: dataSet.uint16('x00280103'),
+        SamplesPerPixel: dataSet.uint16('x00280002') || 1,
+        PhotometricInterpretation: dataSet.string('x00280004'),
+        PlanarConfiguration: dataSet.uint16('x00280006'),
+        PixelAspectRatio: dataSet.string('x00280034'),
+
+        // Modality LUT Module
+        RescaleIntercept: parseFloat(dataSet.string('x00281052')) || 0,
+        RescaleSlope: parseFloat(dataSet.string('x00281053')) || 1,
+        RescaleType: dataSet.string('x00281054'),
+
+        // VOI LUT Module
+        WindowCenter: dataSet.string('x00281050'),
+        WindowWidth: dataSet.string('x00281051'),
+        WindowCenterWidthExplanation: dataSet.string('x00281055'),
+
+        // Image Plane Module
+        PixelSpacing: dataSet.string('x00280030'),
+        ImageOrientationPatient: dataSet.string('x00200037'),
+        ImagePositionPatient: dataSet.string('x00200032'),
+        SliceThickness: dataSet.string('x00180050'),
+        SliceLocation: dataSet.string('x00201041'),
+        FrameOfReferenceUID: dataSet.string('x00200052'),
+
+        // Instance Module
+        InstanceNumber: dataSet.uint16('x00200013'),
+
+        // Acquisition Module (if available)
+        AcquisitionNumber: dataSet.uint16('x00200012'),
+        AcquisitionDate: dataSet.string('x00080022'),
+        AcquisitionTime: dataSet.string('x00080032'),
+      };
+
+      console.log('📋 Parsed DICOM metadata:', metadata);
+      return metadata;
+    } catch (error) {
+      console.error('❌ Error fetching DICOM metadata:', error);
+      throw error;
+    }
+  };
 
   /**
    * Initialize the data source
@@ -161,67 +264,147 @@ function createXNATDataSource(config) {
         console.log('retrieve.series.metadata called for study:', StudyInstanceUID,
                     'filters:', filters, 'returnPromises:', returnPromises);
 
-        const formatSeriesMetadata = (studyMetadata) => {
+        const formatSeriesMetadata = async (studyMetadata) => {
           console.log('📊 Raw study metadata:', studyMetadata);
 
-          // Add instances to DicomMetadataStore with imageId
-          studyMetadata.series.forEach(series => {
-            series.instances.forEach(instance => {
-              // Create the imageId using our custom xnat: scheme
+          // Build series summary and instances per series (matching DicomWeb format)
+          const seriesSummaryMetadata = {};
+          const instancesPerSeries = {};
+
+          // Process each series
+          for (const series of studyMetadata.series) {
+            const seriesUID = series.SeriesInstanceUID;
+
+            // Fetch DICOM metadata from the first instance of this series
+            let dicomMetadata = null;
+            if (series.instances.length > 0) {
+              const firstInstanceUrl = series.instances[0].url;
+              console.log('📥 Fetching DICOM metadata from first instance:', firstInstanceUrl);
+              try {
+                dicomMetadata = await fetchDicomMetadata(firstInstanceUrl);
+              } catch (error) {
+                console.error('⚠️ Failed to fetch DICOM metadata for series', seriesUID, error);
+              }
+            }
+
+            // Create series summary using actual DICOM metadata if available
+            if (!seriesSummaryMetadata[seriesUID]) {
+              const baseMetadata = series.instances[0]?.metadata || {};
+              const metadata = dicomMetadata || baseMetadata;
+
+              seriesSummaryMetadata[seriesUID] = {
+                StudyInstanceUID: metadata.StudyInstanceUID || studyMetadata.StudyInstanceUID,
+                StudyDescription: metadata.StudyDescription || studyMetadata.StudyDescription,
+                SeriesInstanceUID: metadata.SeriesInstanceUID || series.SeriesInstanceUID,
+                SeriesDescription: metadata.SeriesDescription || series.SeriesDescription,
+                SeriesNumber: metadata.SeriesNumber || series.SeriesNumber,
+                SeriesDate: metadata.SeriesDate || '',
+                SeriesTime: metadata.SeriesTime || '',
+                Modality: metadata.Modality || series.Modality,
+                SOPClassUID: metadata.SOPClassUID || baseMetadata.SOPClassUID,
+                ProtocolName: metadata.ProtocolName || '',
+              };
+            }
+
+            // Build instances array with imageId and proper metadata
+            if (!instancesPerSeries[seriesUID]) {
+              instancesPerSeries[seriesUID] = [];
+            }
+
+            series.instances.forEach((instance, index) => {
               const imageId = `xnat:${instance.url}`;
 
-              // Add imageId to the metadata (lowercase is important!)
-              const instanceWithImageId = {
-                ...instance.metadata,
-                imageId: imageId,  // lowercase 'i' - OHIF looks for this
-                url: instance.url,
-                wadoRoot: instance.url,
-                wadoUri: instance.url,
+              // Use DICOM metadata for all instances in the series
+              // (ideally we'd fetch each one, but using first instance metadata as template)
+              const baseMetadata = dicomMetadata || instance.metadata;
+
+              // Calculate unique position for each slice if not available
+              const sliceSpacing = parseFloat(baseMetadata.SliceThickness) || 1;
+              const basePosition = baseMetadata.ImagePositionPatient
+                ? baseMetadata.ImagePositionPatient.split('\\').map(parseFloat)
+                : [0, 0, 0];
+
+              // Calculate position for this slice (increment Z position)
+              const instancePosition = [
+                basePosition[0],
+                basePosition[1],
+                basePosition[2] + (index * sliceSpacing)
+              ];
+
+              const instanceMetadata = {
+                ...baseMetadata,
+                // Ensure critical fields are always set - use XNAT experiment ID as StudyInstanceUID
+                StudyInstanceUID: studyMetadata.StudyInstanceUID, // Always use XNAT experiment ID
+                SeriesInstanceUID: seriesUID,
+                // Override instance-specific values
+                SOPInstanceUID: instance.metadata.SOPInstanceUID || baseMetadata.SOPInstanceUID,
+                InstanceNumber: instance.metadata.InstanceNumber || index + 1,
+                // Set unique position for each slice
+                ImagePositionPatient: instancePosition.join('\\'),
+                SliceLocation: instancePosition[2],
+                // Ensure orientation is set (default to axial if missing)
+                ImageOrientationPatient: baseMetadata.ImageOrientationPatient || '1\\0\\0\\0\\1\\0',
               };
 
-              DicomMetadataStore.addInstance(instanceWithImageId);
+              const instanceWithImageId = {
+                ...instanceMetadata,
+                imageId: imageId,  // lowercase 'i' - OHIF looks for this
+              };
+
+              instancesPerSeries[seriesUID].push(instanceWithImageId);
+
+              // Register imageId to UIDs mapping with metadataProvider
+              metadataProvider.addImageIdToUIDs(imageId, {
+                StudyInstanceUID: instanceMetadata.StudyInstanceUID,
+                SeriesInstanceUID: seriesUID,
+                SOPInstanceUID: instanceMetadata.SOPInstanceUID,
+              });
+            });
+          }
+
+          // Add to DicomMetadataStore (OHIF expects this)
+          DicomMetadataStore.addSeriesMetadata(Object.values(seriesSummaryMetadata), false);
+          Object.keys(instancesPerSeries).forEach(seriesInstanceUID => {
+            const instances = instancesPerSeries[seriesInstanceUID];
+            console.log(`📦 Adding ${instances.length} instances for series ${seriesInstanceUID}, first instance has StudyInstanceUID:`, instances[0]?.StudyInstanceUID);
+            DicomMetadataStore.addInstances(instances, false);
+          });
+          console.log('✅ Added series and instances to DicomMetadataStore');
+          console.log('✅ Registered imageId to UIDs mappings with metadataProvider');
+
+          console.log('📊 Returning series summary metadata:', {
+            count: Object.keys(seriesSummaryMetadata).length,
+            seriesUIDs: Object.keys(seriesSummaryMetadata),
+            firstSeries: Object.values(seriesSummaryMetadata)[0]
+          });
+
+          // Verify instances have StudyInstanceUID
+          Object.keys(instancesPerSeries).forEach(seriesUID => {
+            const instances = instancesPerSeries[seriesUID];
+            const firstInstance = instances[0];
+            console.log(`🔍 Verification - Series ${seriesUID}:`, {
+              instanceCount: instances.length,
+              firstInstanceHasStudyUID: !!firstInstance?.StudyInstanceUID,
+              firstInstanceStudyUID: firstInstance?.StudyInstanceUID,
+              firstInstanceSeriesUID: firstInstance?.SeriesInstanceUID,
+              firstInstanceSOPUID: firstInstance?.SOPInstanceUID,
             });
           });
-          console.log('✅ Added instances to DicomMetadataStore with imageId');
 
-          // Format metadata for OHIF
-          const naturalizedSeries = (studyMetadata?.series || []).map(series => ({
-            SeriesInstanceUID: series.SeriesInstanceUID,
-            SeriesNumber: series.SeriesNumber,
-            SeriesDescription: series.SeriesDescription,
-            Modality: series.Modality,
-            instances: series.instances.map(instance => {
-              const imageId = `xnat:${instance.url}`;
-              return {
-                ...instance.metadata,
-                url: instance.url,
-                imageId: imageId,  // lowercase 'i'
-                wadoRoot: instance.url,
-                wadoUri: instance.url,
-              };
-            }),
-          }));
-
-          console.log('📊 Formatted series metadata:', {
-            count: naturalizedSeries.length,
-            firstSeries: naturalizedSeries[0] ? {
-              SeriesInstanceUID: naturalizedSeries[0].SeriesInstanceUID,
-              instanceCount: naturalizedSeries[0].instances.length,
-              firstInstance: naturalizedSeries[0].instances[0]
-            } : null
-          });
-          return naturalizedSeries;
+          // Return object indexed by SeriesInstanceUID (NOT array!)
+          return seriesSummaryMetadata;
         };
 
         // If returnPromises is true, return array of promise wrappers
         if (returnPromises) {
-          console.log('Returning promise wrapper for lazy loading');
+          console.log('🔄 returnPromises=true, returning promise wrapper with start() function');
           return [{
             promise: null,
             start: async () => {
+              console.log('🔄 Promise wrapper start() called for study:', StudyInstanceUID);
               const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
-              console.log('Study metadata retrieved (promise mode):', studyMetadata);
-              return formatSeriesMetadata(studyMetadata);
+              console.log('🔄 Study metadata retrieved in promise mode:', studyMetadata);
+              return await formatSeriesMetadata(studyMetadata);
             }
           }];
         }
@@ -230,7 +413,7 @@ function createXNATDataSource(config) {
         try {
           const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
           console.log('Study metadata retrieved:', studyMetadata);
-          return formatSeriesMetadata(studyMetadata);
+          return await formatSeriesMetadata(studyMetadata);
         } catch (error) {
           console.error('Error retrieving study:', error);
           throw error;
@@ -246,17 +429,29 @@ function createXNATDataSource(config) {
     console.log('🎯 getImageIdsForDisplaySet called with displaySet:', {
       displaySetInstanceUID: displaySet.displaySetInstanceUID,
       SeriesInstanceUID: displaySet.SeriesInstanceUID,
-      imageCount: displaySet.images?.length
+      hasImages: !!displaySet.images,
+      imageCount: displaySet.images?.length,
+      hasInstances: !!displaySet.instances,
+      instanceCount: displaySet.instances?.length,
+      displaySetKeys: Object.keys(displaySet),
     });
 
     const imageIds = [];
 
-    if (displaySet.images && displaySet.images.length > 0) {
-      displaySet.images.forEach(image => {
-        const imageId = getImageIdsForInstance({ instance: image });
-        imageIds.push(imageId);
-      });
+    // Try both 'images' and 'instances' properties
+    const instances = displaySet.images || displaySet.instances;
+
+    if (!instances || instances.length === 0) {
+      console.error('🔴 No images or instances found in displaySet!');
+      console.log('🔴 DisplaySet structure:', JSON.stringify(displaySet, null, 2).substring(0, 500));
+      return imageIds;
     }
+
+    instances.forEach((instance, index) => {
+      console.log(`🎯 Processing instance ${index + 1}/${instances.length}, has imageId:`, !!instance.imageId);
+      const imageId = getImageIdsForInstance({ instance });
+      imageIds.push(imageId);
+    });
 
     console.log('🎯 Generated', imageIds.length, 'image IDs, first:', imageIds[0]);
     return imageIds;
@@ -266,16 +461,23 @@ function createXNATDataSource(config) {
    * Get image ID for a specific instance
    */
   const getImageIdsForInstance = ({ instance }) => {
-    console.log('🎯 getImageIdsForInstance called, instance has url:', !!instance.url);
+    console.log('🎯 getImageIdsForInstance called, has imageId:', !!instance.imageId, 'has url:', !!instance.url);
 
-    // Use XNAT custom image loader scheme
+    // Instance already has imageId from DicomMetadataStore
+    if (instance.imageId) {
+      console.log('🎯 Using existing imageId:', instance.imageId);
+      return instance.imageId;
+    }
+
+    // Fallback: generate from URL if available
     if (instance.url) {
       const imageId = `xnat:${instance.url}`;
-      console.log('🎯 Generated imageId:', imageId);
+      console.log('🎯 Generated imageId from URL:', imageId);
       return imageId;
     }
 
-    throw new Error('No URL available for instance');
+    console.error('🔴 Instance has no imageId or url:', instance);
+    throw new Error('No imageId or URL available for instance');
   };
 
   /**

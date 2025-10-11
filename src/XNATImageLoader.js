@@ -18,9 +18,10 @@ export function configure(xnatConfig) {
 /**
  * Load an image from XNAT
  * @param {String} imageId - Image ID in format xnat:URL
- * @returns {Promise<Object>} Image object compatible with Cornerstone
+ * @returns {Object} Image load object with promise property
  */
-export async function loadImage(imageId) {
+export function loadImage(imageId) {
+  console.error('🔵🔵🔵 XNATImageLoader.loadImage CALLED!!! imageId:', imageId);
   console.log('🔵 XNATImageLoader.loadImage called with imageId:', imageId);
 
   // Extract URL from imageId (format: xnat:URL)
@@ -28,7 +29,8 @@ export async function loadImage(imageId) {
   console.log('🔵 Fetching DICOM from URL:', url);
   console.log('🔵 Config available:', !!config, 'has credentials:', !!(config?.username && config?.password));
 
-  try {
+  const promise = (async () => {
+    try {
     // Setup authentication headers
     const headers = {
       'Content-Type': 'application/dicom',
@@ -119,6 +121,7 @@ export async function loadImage(imageId) {
       getPixelData: () => pixelData,
       photometricInterpretation,
       samplesPerPixel,
+      render: true, // Tell Cornerstone to render this image
     };
 
     // Calculate min/max if not provided
@@ -142,13 +145,26 @@ export async function loadImage(imageId) {
     }
 
     console.log('🔵 Successfully loaded DICOM image, size:', image.width, 'x', image.height);
+    console.log('🔵 Image details:', {
+      minPixelValue: image.minPixelValue,
+      maxPixelValue: image.maxPixelValue,
+      windowCenter: image.windowCenter,
+      windowWidth: image.windowWidth,
+      pixelDataLength: pixelData.length,
+      pixelDataType: pixelData.constructor.name,
+    });
 
-    // Cornerstone3D expects a Promise that resolves to the image directly
     return image;
-  } catch (error) {
-    console.error('🔴 Error loading image from XNAT:', error);
-    throw error;
-  }
+    } catch (error) {
+      console.error('🔴 Error loading image from XNAT:', error);
+      throw error;
+    }
+  })();
+
+  // Return an object with the promise property as expected by Cornerstone
+  return {
+    promise,
+  };
 }
 
 /**

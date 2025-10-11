@@ -189,10 +189,14 @@ class XNATClient {
                 StudyInstanceUID: studyInstanceUID,
                 SeriesInstanceUID: seriesInstanceUID,
                 SeriesNumber: parseInt(scan.ID) || index + 1,
+                SeriesDescription: scan.series_description || scan.type || 'Unknown',
+                SeriesDate: scan.date || '',
+                SeriesTime: '',
                 InstanceNumber: index + 1,
                 SOPInstanceUID: `${seriesInstanceUID}.${index + 1}`,
                 SOPClassUID: SOPClassUID,
                 Modality: modality,
+                NumberOfFrames: 1,
                 Rows: 512,  // Default, will be overwritten when DICOM loads
                 Columns: 512,
               }
