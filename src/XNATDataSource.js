@@ -10,6 +10,16 @@ function createXNATDataSource(config) {
   const client = new XNATClient(config);
   let currentProjectFilter = null;
 
+  // Configure the XNAT image loader with credentials
+  const XNATImageLoader = require('./XNATImageLoader.js').default;
+  XNATImageLoader.configure({
+    xnatUrl: config.xnatUrl,
+    username: config.username,
+    password: config.password,
+    token: config.token,
+  });
+  console.log('✅ XNAT image loader configured with datasource credentials');
+
   /**
    * Initialize the data source
    */
@@ -152,19 +162,54 @@ function createXNATDataSource(config) {
                     'filters:', filters, 'returnPromises:', returnPromises);
 
         const formatSeriesMetadata = (studyMetadata) => {
+          console.log('📊 Raw study metadata:', studyMetadata);
+
+          // Add instances to DicomMetadataStore with imageId
+          studyMetadata.series.forEach(series => {
+            series.instances.forEach(instance => {
+              // Create the imageId using our custom xnat: scheme
+              const imageId = `xnat:${instance.url}`;
+
+              // Add imageId to the metadata (lowercase is important!)
+              const instanceWithImageId = {
+                ...instance.metadata,
+                imageId: imageId,  // lowercase 'i' - OHIF looks for this
+                url: instance.url,
+                wadoRoot: instance.url,
+                wadoUri: instance.url,
+              };
+
+              DicomMetadataStore.addInstance(instanceWithImageId);
+            });
+          });
+          console.log('✅ Added instances to DicomMetadataStore with imageId');
+
           // Format metadata for OHIF
           const naturalizedSeries = (studyMetadata?.series || []).map(series => ({
             SeriesInstanceUID: series.SeriesInstanceUID,
             SeriesNumber: series.SeriesNumber,
             SeriesDescription: series.SeriesDescription,
             Modality: series.Modality,
-            instances: series.instances.map(instance => ({
-              ...instance.metadata,
-              url: instance.url,
-            })),
+            instances: series.instances.map(instance => {
+              const imageId = `xnat:${instance.url}`;
+              return {
+                ...instance.metadata,
+                url: instance.url,
+                imageId: imageId,  // lowercase 'i'
+                wadoRoot: instance.url,
+                wadoUri: instance.url,
+              };
+            }),
           }));
 
-          console.log('Returning naturalized series:', naturalizedSeries);
+          console.log('📊 Formatted series metadata:', {
+            count: naturalizedSeries.length,
+            firstSeries: naturalizedSeries[0] ? {
+              SeriesInstanceUID: naturalizedSeries[0].SeriesInstanceUID,
+              instanceCount: naturalizedSeries[0].instances.length,
+              firstInstance: naturalizedSeries[0].instances[0]
+            } : null
+          });
           return naturalizedSeries;
         };
 
@@ -198,6 +243,12 @@ function createXNATDataSource(config) {
    * Get image IDs for display set
    */
   const getImageIdsForDisplaySet = (displaySet) => {
+    console.log('🎯 getImageIdsForDisplaySet called with displaySet:', {
+      displaySetInstanceUID: displaySet.displaySetInstanceUID,
+      SeriesInstanceUID: displaySet.SeriesInstanceUID,
+      imageCount: displaySet.images?.length
+    });
+
     const imageIds = [];
 
     if (displaySet.images && displaySet.images.length > 0) {
@@ -207,6 +258,7 @@ function createXNATDataSource(config) {
       });
     }
 
+    console.log('🎯 Generated', imageIds.length, 'image IDs, first:', imageIds[0]);
     return imageIds;
   };
 
@@ -214,9 +266,13 @@ function createXNATDataSource(config) {
    * Get image ID for a specific instance
    */
   const getImageIdsForInstance = ({ instance }) => {
+    console.log('🎯 getImageIdsForInstance called, instance has url:', !!instance.url);
+
     // Use XNAT custom image loader scheme
     if (instance.url) {
-      return `xnat:${instance.url}`;
+      const imageId = `xnat:${instance.url}`;
+      console.log('🎯 Generated imageId:', imageId);
+      return imageId;
     }
 
     throw new Error('No URL available for instance');

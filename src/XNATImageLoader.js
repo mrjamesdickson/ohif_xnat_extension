@@ -26,6 +26,7 @@ export async function loadImage(imageId) {
   // Extract URL from imageId (format: xnat:URL)
   const url = imageId.replace('xnat:', '');
   console.log('🔵 Fetching DICOM from URL:', url);
+  console.log('🔵 Config available:', !!config, 'has credentials:', !!(config?.username && config?.password));
 
   try {
     // Setup authentication headers
@@ -36,10 +37,14 @@ export async function loadImage(imageId) {
     if (config) {
       if (config.token) {
         headers['Authorization'] = `Bearer ${config.token}`;
+        console.log('🔵 Using Bearer token authentication');
       } else if (config.username && config.password) {
         const auth = btoa(`${config.username}:${config.password}`);
         headers['Authorization'] = `Basic ${auth}`;
+        console.log('🔵 Using Basic authentication');
       }
+    } else {
+      console.warn('⚠️ No config available for authentication!');
     }
 
     // Fetch the DICOM file
@@ -136,11 +141,12 @@ export async function loadImage(imageId) {
       image.windowWidth = range;
     }
 
-    return {
-      promise: Promise.resolve(image),
-    };
+    console.log('🔵 Successfully loaded DICOM image, size:', image.width, 'x', image.height);
+
+    // Cornerstone3D expects a Promise that resolves to the image directly
+    return image;
   } catch (error) {
-    console.error('Error loading image from XNAT:', error);
+    console.error('🔴 Error loading image from XNAT:', error);
     throw error;
   }
 }
