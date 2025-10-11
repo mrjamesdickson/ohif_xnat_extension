@@ -21,8 +21,11 @@ export function configure(xnatConfig) {
  * @returns {Promise<Object>} Image object compatible with Cornerstone
  */
 export async function loadImage(imageId) {
+  console.log('🔵 XNATImageLoader.loadImage called with imageId:', imageId);
+
   // Extract URL from imageId (format: xnat:URL)
   const url = imageId.replace('xnat:', '');
+  console.log('🔵 Fetching DICOM from URL:', url);
 
   try {
     // Setup authentication headers

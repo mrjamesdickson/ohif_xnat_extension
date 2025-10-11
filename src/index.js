@@ -1,8 +1,34 @@
 import createXNATDataSource from './XNATDataSource.js';
+import XNATImageLoader from './XNATImageLoader.js';
+import { imageLoader } from '@cornerstonejs/core';
 
 const EXTENSION_ID = '@ohif/extension-xnat-datasource';
 
 console.log('XNAT Extension Loading...', EXTENSION_ID);
+
+/**
+ * Pre-registration hook to register the XNAT image loader
+ */
+function preRegistration({ servicesManager, configuration = {} }) {
+  console.log('🟢 XNAT Extension preRegistration called with config:', configuration);
+
+  // Register the XNAT image loader with Cornerstone
+  imageLoader.registerImageLoader('xnat', XNATImageLoader.loadImage);
+  console.log('🟢 XNAT image loader registered for "xnat:" scheme');
+
+  // Configure the image loader with XNAT credentials
+  if (configuration.xnatUrl) {
+    XNATImageLoader.configure({
+      xnatUrl: configuration.xnatUrl,
+      username: configuration.username,
+      password: configuration.password,
+      token: configuration.token,
+    });
+    console.log('🟢 XNAT image loader configured with credentials');
+  } else {
+    console.warn('⚠️ No XNAT configuration provided to preRegistration');
+  }
+}
 
 /**
  * Get data sources provided by this extension
@@ -22,6 +48,7 @@ function getDataSourcesModule() {
 
 const extension = {
   id: EXTENSION_ID,
+  preRegistration,
   getDataSourcesModule,
 };
 

@@ -110,7 +110,11 @@ class XNATClient {
         `/data/experiments/${experimentId}/scans/${scanId}/resources/DICOM/files`,
         { params: { format: 'json' } }
       );
-      return response.data?.ResultSet?.Result || [];
+      const files = response.data?.ResultSet?.Result || [];
+      if (files.length > 0) {
+        console.log(`Sample file object for scan ${scanId}:`, files[0]);
+      }
+      return files;
     } catch (error) {
       console.error('Error fetching scan files:', error);
       throw error;
@@ -155,17 +159,23 @@ class XNATClient {
           const modality = this.getModalityFromXsiType(scan.xsiType);
 
           // Get all instances for this series - use full URL with baseUrl
-          const instances = files.map((file, index) => ({
-            url: `${this.baseUrl}${file.URI}`,
-            metadata: {
-              StudyInstanceUID: experimentId,
-              SeriesInstanceUID: scan.ID,
-              SeriesNumber: parseInt(scan.ID) || index + 1,
-              InstanceNumber: index + 1,
-              SOPInstanceUID: `${scan.ID}.${index + 1}`,
-              Modality: modality,
+          const instances = files.map((file, index) => {
+            const url = `${this.baseUrl}${file.URI}`;
+            if (index === 0) {
+              console.log(`Sample DICOM file URL for scan ${scan.ID}:`, url);
             }
-          }));
+            return {
+              url,
+              metadata: {
+                StudyInstanceUID: experimentId,
+                SeriesInstanceUID: scan.ID,
+                SeriesNumber: parseInt(scan.ID) || index + 1,
+                InstanceNumber: index + 1,
+                SOPInstanceUID: `${scan.ID}.${index + 1}`,
+                Modality: modality,
+              }
+            };
+          });
 
           console.log(`Scan ${scan.ID}: xsiType=${scan.xsiType}, modality=${modality}, desc=${scan.series_description}`);
 

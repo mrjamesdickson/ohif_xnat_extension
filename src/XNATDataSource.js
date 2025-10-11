@@ -147,12 +147,11 @@ function createXNATDataSource(config) {
       return null;
     },
     series: {
-      metadata: async ({ StudyInstanceUID, filters } = {}) => {
-        console.log('retrieve.series.metadata called for study:', StudyInstanceUID, 'filters:', filters);
-        try {
-          const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
-          console.log('Study metadata retrieved:', studyMetadata);
+      metadata: async ({ StudyInstanceUID, filters, returnPromises } = {}) => {
+        console.log('retrieve.series.metadata called for study:', StudyInstanceUID,
+                    'filters:', filters, 'returnPromises:', returnPromises);
 
+        const formatSeriesMetadata = (studyMetadata) => {
           // Format metadata for OHIF
           const naturalizedSeries = (studyMetadata?.series || []).map(series => ({
             SeriesInstanceUID: series.SeriesInstanceUID,
@@ -167,6 +166,26 @@ function createXNATDataSource(config) {
 
           console.log('Returning naturalized series:', naturalizedSeries);
           return naturalizedSeries;
+        };
+
+        // If returnPromises is true, return array of promise wrappers
+        if (returnPromises) {
+          console.log('Returning promise wrapper for lazy loading');
+          return [{
+            promise: null,
+            start: async () => {
+              const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
+              console.log('Study metadata retrieved (promise mode):', studyMetadata);
+              return formatSeriesMetadata(studyMetadata);
+            }
+          }];
+        }
+
+        // Standard path - fetch immediately
+        try {
+          const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
+          console.log('Study metadata retrieved:', studyMetadata);
+          return formatSeriesMetadata(studyMetadata);
         } catch (error) {
           console.error('Error retrieving study:', error);
           throw error;
@@ -195,9 +214,9 @@ function createXNATDataSource(config) {
    * Get image ID for a specific instance
    */
   const getImageIdsForInstance = ({ instance }) => {
-    // Use WADO URI scheme for direct DICOM file access
+    // Use XNAT custom image loader scheme
     if (instance.url) {
-      return `wadouri:${instance.url}`;
+      return `xnat:${instance.url}`;
     }
 
     throw new Error('No URL available for instance');
@@ -212,9 +231,10 @@ function createXNATDataSource(config) {
 
   /**
    * Get study instance UIDs
+   * IMPORTANT: Must return array directly, NOT a Promise
    */
-  const getStudyInstanceUIDs = ({ params, filter } = {}) => {
-    console.log('getStudyInstanceUIDs called with params:', params, 'filter:', filter);
+  const getStudyInstanceUIDs = ({ params, query } = {}) => {
+    console.log('getStudyInstanceUIDs called with params:', params, 'query:', query);
     console.log('Current URL:', window.location.href);
 
     // Try to get StudyInstanceUIDs from URL if not in params
@@ -225,8 +245,8 @@ function createXNATDataSource(config) {
       if (studyUIDs) {
         console.log('Found StudyInstanceUIDs in URL:', studyUIDs);
         const uids = studyUIDs.includes(',') ? studyUIDs.split(',') : [studyUIDs];
-        console.log('Returning UIDs:', uids);
-        return Promise.resolve(uids);
+        console.log('Returning UIDs array:', uids);
+        return uids;  // Return array directly, NOT Promise
       }
     }
 
@@ -236,12 +256,12 @@ function createXNATDataSource(config) {
         ? params.StudyInstanceUIDs
         : [params.StudyInstanceUIDs];
       console.log('Returning StudyInstanceUIDs from params:', uids);
-      return Promise.resolve(uids);
+      return uids;  // Return array directly, NOT Promise
     }
 
     console.log('No StudyInstanceUIDs found, returning empty array');
-    // Otherwise return empty array
-    return Promise.resolve([]);
+    // Return empty array directly, NOT Promise
+    return [];
   };
 
   return {
