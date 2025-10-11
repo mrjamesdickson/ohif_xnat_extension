@@ -43,7 +43,32 @@ function createXNATDataSource(config) {
     studies: {
       mapParams: params => params,
       search: async (queryParams = {}) => {
+        console.log('studies.search called with params:', queryParams);
         try {
+          // If searching for specific StudyInstanceUIDs, return those
+          if (queryParams.StudyInstanceUIDs) {
+            console.log('Searching for specific studies:', queryParams.StudyInstanceUIDs);
+            const uids = Array.isArray(queryParams.StudyInstanceUIDs)
+              ? queryParams.StudyInstanceUIDs
+              : [queryParams.StudyInstanceUIDs];
+
+            // Return minimal study data for the UIDs
+            const studies = uids.map(uid => ({
+              studyInstanceUid: uid,
+              date: '',
+              time: '',
+              description: uid,
+              modalities: 'MR',
+              accession: uid,
+              instances: 0,
+              patientName: uid,
+              mrn: uid,
+            }));
+
+            console.log('Returning studies for UIDs:', studies);
+            return studies;
+          }
+
           // Add current project filter if set
           const params = { ...queryParams };
           if (currentProjectFilter) {
@@ -189,8 +214,33 @@ function createXNATDataSource(config) {
    * Get study instance UIDs
    */
   const getStudyInstanceUIDs = ({ params, filter } = {}) => {
-    console.log('getStudyInstanceUIDs called with params:', params);
-    // Return empty array - studies are loaded via query.studies.search
+    console.log('getStudyInstanceUIDs called with params:', params, 'filter:', filter);
+    console.log('Current URL:', window.location.href);
+
+    // Try to get StudyInstanceUIDs from URL if not in params
+    if (!params?.StudyInstanceUIDs) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const studyUIDs = urlParams.get('StudyInstanceUIDs');
+
+      if (studyUIDs) {
+        console.log('Found StudyInstanceUIDs in URL:', studyUIDs);
+        const uids = studyUIDs.includes(',') ? studyUIDs.split(',') : [studyUIDs];
+        console.log('Returning UIDs:', uids);
+        return Promise.resolve(uids);
+      }
+    }
+
+    // If StudyInstanceUIDs are provided in params, return them
+    if (params?.StudyInstanceUIDs) {
+      const uids = Array.isArray(params.StudyInstanceUIDs)
+        ? params.StudyInstanceUIDs
+        : [params.StudyInstanceUIDs];
+      console.log('Returning StudyInstanceUIDs from params:', uids);
+      return Promise.resolve(uids);
+    }
+
+    console.log('No StudyInstanceUIDs found, returning empty array');
+    // Otherwise return empty array
     return Promise.resolve([]);
   };
 
@@ -200,7 +250,13 @@ function createXNATDataSource(config) {
     retrieve,
     store: () => console.warn('store() not implemented for XNAT data source'),
     reject: () => console.warn('reject() not implemented for XNAT data source'),
-    parseRouteParams: () => console.warn('parseRouteParams() not implemented for XNAT data source'),
+    parseRouteParams: (params) => {
+      console.log('parseRouteParams called with:', params);
+      // Extract StudyInstanceUIDs from URL params
+      return {
+        StudyInstanceUIDs: params.StudyInstanceUIDs,
+      };
+    },
     deleteStudyMetadataPromise: () => console.warn('deleteStudyMetadataPromise() not implemented for XNAT data source'),
     getImageIdsForDisplaySet,
     getImageIdsForInstance,
