@@ -158,21 +158,43 @@ class XNATClient {
 
           const modality = this.getModalityFromXsiType(scan.xsiType);
 
+          // Generate proper DICOM UIDs
+          // Use XNAT base OID (2.25 is for UUID-derived UIDs)
+          const seriesInstanceUID = `2.25.${experimentId}.${scan.ID}`;
+          const studyInstanceUID = `2.25.${experimentId}`;
+
           // Get all instances for this series - use full URL with baseUrl
           const instances = files.map((file, index) => {
             const url = `${this.baseUrl}${file.URI}`;
             if (index === 0) {
               console.log(`Sample DICOM file URL for scan ${scan.ID}:`, url);
             }
+
+            // Determine SOPClassUID based on modality
+            // These are common DICOM SOPClassUIDs
+            let SOPClassUID;
+            if (modality === 'CT') {
+              SOPClassUID = '1.2.840.10008.5.1.4.1.1.2'; // CT Image Storage
+            } else if (modality === 'MR') {
+              SOPClassUID = '1.2.840.10008.5.1.4.1.1.4'; // MR Image Storage
+            } else if (modality === 'PT') {
+              SOPClassUID = '1.2.840.10008.5.1.4.1.1.128'; // PET Image Storage
+            } else {
+              SOPClassUID = '1.2.840.10008.5.1.4.1.1.2'; // Default to CT
+            }
+
             return {
               url,
               metadata: {
-                StudyInstanceUID: experimentId,
-                SeriesInstanceUID: scan.ID,
+                StudyInstanceUID: studyInstanceUID,
+                SeriesInstanceUID: seriesInstanceUID,
                 SeriesNumber: parseInt(scan.ID) || index + 1,
                 InstanceNumber: index + 1,
-                SOPInstanceUID: `${scan.ID}.${index + 1}`,
+                SOPInstanceUID: `${seriesInstanceUID}.${index + 1}`,
+                SOPClassUID: SOPClassUID,
                 Modality: modality,
+                Rows: 512,  // Default, will be overwritten when DICOM loads
+                Columns: 512,
               }
             };
           });
@@ -180,7 +202,7 @@ class XNATClient {
           console.log(`Scan ${scan.ID}: xsiType=${scan.xsiType}, modality=${modality}, desc=${scan.series_description}`);
 
           return {
-            SeriesInstanceUID: scan.ID,
+            SeriesInstanceUID: seriesInstanceUID,
             SeriesNumber: parseInt(scan.ID) || 0,
             SeriesDescription: scan.series_description || scan.type || 'Unknown',
             Modality: modality,

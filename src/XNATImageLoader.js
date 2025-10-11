@@ -26,6 +26,7 @@ export async function loadImage(imageId) {
   // Extract URL from imageId (format: xnat:URL)
   const url = imageId.replace('xnat:', '');
   console.log('🔵 Fetching DICOM from URL:', url);
+  console.log('🔵 Config available:', !!config, 'has credentials:', !!(config?.username && config?.password));
 
   try {
     // Setup authentication headers
@@ -36,10 +37,14 @@ export async function loadImage(imageId) {
     if (config) {
       if (config.token) {
         headers['Authorization'] = `Bearer ${config.token}`;
+        console.log('🔵 Using Bearer token authentication');
       } else if (config.username && config.password) {
         const auth = btoa(`${config.username}:${config.password}`);
         headers['Authorization'] = `Basic ${auth}`;
+        console.log('🔵 Using Basic authentication');
       }
+    } else {
+      console.warn('⚠️ No config available for authentication!');
     }
 
     // Fetch the DICOM file
