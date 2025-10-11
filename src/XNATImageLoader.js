@@ -141,11 +141,12 @@ export async function loadImage(imageId) {
       image.windowWidth = range;
     }
 
-    return {
-      promise: Promise.resolve(image),
-    };
+    console.log('🔵 Successfully loaded DICOM image, size:', image.width, 'x', image.height);
+
+    // Cornerstone3D expects a Promise that resolves to the image directly
+    return image;
   } catch (error) {
-    console.error('Error loading image from XNAT:', error);
+    console.error('🔴 Error loading image from XNAT:', error);
     throw error;
   }
 }

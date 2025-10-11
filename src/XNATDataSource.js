@@ -164,24 +164,25 @@ function createXNATDataSource(config) {
         const formatSeriesMetadata = (studyMetadata) => {
           console.log('📊 Raw study metadata:', studyMetadata);
 
-          // Add instances to DicomMetadataStore with ImageId
+          // Add instances to DicomMetadataStore with imageId
           studyMetadata.series.forEach(series => {
             series.instances.forEach(instance => {
               // Create the imageId using our custom xnat: scheme
               const imageId = `xnat:${instance.url}`;
 
-              // Add ImageId to the metadata
+              // Add imageId to the metadata (lowercase is important!)
               const instanceWithImageId = {
                 ...instance.metadata,
-                ImageId: imageId,
-                wadoRoot: instance.url, // Some OHIF code looks for this
+                imageId: imageId,  // lowercase 'i' - OHIF looks for this
+                url: instance.url,
+                wadoRoot: instance.url,
                 wadoUri: instance.url,
               };
 
               DicomMetadataStore.addInstance(instanceWithImageId);
             });
           });
-          console.log('✅ Added instances to DicomMetadataStore with ImageId');
+          console.log('✅ Added instances to DicomMetadataStore with imageId');
 
           // Format metadata for OHIF
           const naturalizedSeries = (studyMetadata?.series || []).map(series => ({
@@ -194,7 +195,7 @@ function createXNATDataSource(config) {
               return {
                 ...instance.metadata,
                 url: instance.url,
-                ImageId: imageId,
+                imageId: imageId,  // lowercase 'i'
                 wadoRoot: instance.url,
                 wadoUri: instance.url,
               };
