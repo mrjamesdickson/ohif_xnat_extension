@@ -298,29 +298,36 @@ class XNATClient {
             columns = parseInt(getTagValue('(0028,0011)'));
             sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0;
 
-            // Skip scan if missing critical geometric fields
+            // Warn about missing geometric fields but don't skip the scan
+            let hasWarnings = false;
             if (!imageOrientation) {
-              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing ImageOrientationPatient (0020,0037)`);
-              return null;
+              console.warn(`⚠️  Scan ${scan.ID}: Missing ImageOrientationPatient (0020,0037) - using default axial orientation`);
+              imageOrientation = '1\\0\\0\\0\\1\\0'; // Default to axial
+              hasWarnings = true;
             }
             if (!imagePosition) {
-              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing ImagePositionPatient (0020,0032)`);
-              return null;
+              console.warn(`⚠️  Scan ${scan.ID}: Missing ImagePositionPatient (0020,0032) - using default position`);
+              imagePosition = '0\\0\\0'; // Default to origin
+              hasWarnings = true;
             }
             if (!pixelSpacing) {
-              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing PixelSpacing (0028,0030)`);
-              return null;
+              console.warn(`⚠️  Scan ${scan.ID}: Missing PixelSpacing (0028,0030) - using default 1.0mm`);
+              pixelSpacing = '1\\1'; // Default to 1mm spacing
+              hasWarnings = true;
             }
             if (!sliceThickness) {
-              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing SliceThickness (0018,0050)`);
-              return null;
+              console.warn(`⚠️  Scan ${scan.ID}: Missing SliceThickness (0018,0050) - using default 1.0mm`);
+              sliceThickness = 1.0; // Default to 1mm
+              hasWarnings = true;
             }
             if (!rows || !columns) {
-              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing Rows/Columns (0028,0010/0028,0011)`);
-              return null;
+              console.warn(`⚠️  Scan ${scan.ID}: Missing Rows/Columns (0028,0010/0028,0011) - using defaults`);
+              rows = rows || 512;
+              columns = columns || 512;
+              hasWarnings = true;
             }
 
-            console.log(`Scan ${scan.ID}: Using actual DICOM metadata - Study: ${scanStudyInstanceUID.substring(0, 30)}..., Series: ${seriesInstanceUID.substring(0, 30)}...`);
+            console.log(`Scan ${scan.ID}: Using ${hasWarnings ? 'partial' : 'complete'} DICOM metadata - Study: ${scanStudyInstanceUID.substring(0, 30)}..., Series: ${seriesInstanceUID.substring(0, 30)}...`);
           } else {
             // No DICOM metadata available from dicomdump - skip this scan
             console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Failed to retrieve DICOM metadata from dicomdump`);
