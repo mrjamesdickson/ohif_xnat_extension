@@ -236,7 +236,17 @@ class XNATClient {
     try {
       const params = {
         format: 'json',
-        limit: limit
+        limit: limit,
+        columns: [
+          'ID',
+          'UID',
+          'date',
+          'label',
+          'project',
+          'subject_ID',
+          'xsiType',
+          'modality'
+        ].join(',')
       };
 
       // Add project filter if specified
@@ -283,10 +293,22 @@ class XNATClient {
       const studies = imagingExperiments.map(experiment => {
         const modality = String(this.getModalityFromXsiType(experiment.xsiType));
 
+        const rawDate =
+          experiment.date ??
+          experiment['data_fields/date'] ??
+          experiment.data_fields?.date ??
+          '';
+        const formattedDate = String(rawDate || '').replace(/-/g, '');
+
+        const studyInstanceUid = String(
+          experiment.UID || experiment.ID || 'unknown'
+        );
+
         const study = {
           // OHIF expected fields (lowercase, as per WorkList.tsx line 256-266)
-          studyInstanceUid: String(experiment.ID || 'unknown'),
-          date: String(experiment.date || '').replace(/-/g, ''),  // YYYYMMDD format
+          studyInstanceUid: studyInstanceUid,
+          StudyInstanceUID: studyInstanceUid,
+          date: formattedDate,  // YYYYMMDD format
           time: String(''),
           description: String(experiment.label || 'No Description'),
           modalities: modality,
@@ -298,6 +320,7 @@ class XNATClient {
           // Additional XNAT fields
           ProjectID: String(experiment.project || ''),
           ProjectName: String(experiment.project || ''),
+          StudyDate: formattedDate,
         };
 
         // Ensure all fields are defined
