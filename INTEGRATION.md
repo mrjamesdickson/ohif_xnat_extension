@@ -244,6 +244,27 @@ Replace `XNAT_EXPERIMENT_ID` with an actual experiment ID from your XNAT instanc
 2. Verify the package is installed: `npm list @ohif/extension-xnat-datasource`
 3. Clear browser cache and rebuild: `npm run build`
 
+### Build Errors with Cornerstone Packages
+
+**Error: `Package subpath '.' is not defined by "exports" in @cornerstonejs/core/package.json`**
+
+This error occurs when the build system loads from the extension's `src/` directory instead of the built `dist/` folder, causing dependency conflicts.
+
+**Solution:**
+1. Ensure the extension's `package.json` points to `dist/`:
+   ```json
+   {
+     "main": "dist/index.js",
+     "module": "dist/index.js"
+   }
+   ```
+2. Build the extension before deploying:
+   ```bash
+   npm run build
+   ```
+3. If using npm link, make sure the linked package has been built
+4. The `dist/` folder contains the built code without conflicting node_modules
+
 ### Authentication Failures
 
 1. Verify credentials are correct
