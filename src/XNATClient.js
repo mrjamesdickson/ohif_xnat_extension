@@ -490,7 +490,8 @@ class XNATClient {
   async searchForStudies(params = {}) {
     try {
       // Support project filtering via AccessionNumber field (OHIF study list filter)
-      const projectFilter = params.AccessionNumber || null;
+      // Default to 'test' project if no filter specified
+      const projectFilter = params.AccessionNumber || 'test';
 
       console.log('Searching for XNAT experiments...', projectFilter ? `in project: ${projectFilter}` : 'all projects');
 
