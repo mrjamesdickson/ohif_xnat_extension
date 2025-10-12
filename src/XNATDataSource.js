@@ -402,7 +402,9 @@ function createXNATDataSource(config) {
             promise: null,
             start: async () => {
               console.log('🔄 Promise wrapper start() called for study:', StudyInstanceUID);
-              const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
+              // Resolve DICOM UID to XNAT experiment ID
+              const experimentId = await client.resolveStudyInstanceUID(StudyInstanceUID);
+              const studyMetadata = await client.getStudyMetadata(experimentId);
               console.log('🔄 Study metadata retrieved in promise mode:', studyMetadata);
               return await formatSeriesMetadata(studyMetadata);
             }
@@ -411,7 +413,9 @@ function createXNATDataSource(config) {
 
         // Standard path - fetch immediately
         try {
-          const studyMetadata = await client.getStudyMetadata(StudyInstanceUID);
+          // Resolve DICOM UID to XNAT experiment ID
+          const experimentId = await client.resolveStudyInstanceUID(StudyInstanceUID);
+          const studyMetadata = await client.getStudyMetadata(experimentId);
           console.log('Study metadata retrieved:', studyMetadata);
           return await formatSeriesMetadata(studyMetadata);
         } catch (error) {

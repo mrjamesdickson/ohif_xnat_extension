@@ -156,6 +156,42 @@ class XNATClient {
   }
 
   /**
+   * Resolve DICOM StudyInstanceUID to XNAT experiment ID
+   */
+  async resolveStudyInstanceUID(studyInstanceUID, projectId = null) {
+    try {
+      console.log(`Resolving StudyInstanceUID: ${studyInstanceUID}`);
+
+      const params = {
+        format: 'json',
+        columns: 'ID,UID,project',
+        UID: studyInstanceUID
+      };
+
+      if (projectId) {
+        params.project = projectId;
+      }
+
+      const response = await this.client.get('/data/experiments', { params });
+      const experiments = response.data?.ResultSet?.Result || [];
+
+      if (experiments.length > 0) {
+        const experimentId = experiments[0].ID;
+        console.log(`Resolved ${studyInstanceUID} to experiment ${experimentId}`);
+        return experimentId;
+      }
+
+      // If no match found, assume it's already an experiment ID
+      console.log(`No match found for UID ${studyInstanceUID}, treating as experiment ID`);
+      return studyInstanceUID;
+    } catch (error) {
+      console.error('Error resolving StudyInstanceUID:', error);
+      // Fallback: assume it's already an experiment ID
+      return studyInstanceUID;
+    }
+  }
+
+  /**
    * Download a DICOM file
    */
   async downloadDicomFile(fileUri) {
@@ -376,10 +412,10 @@ class XNATClient {
 
         const study = {
           // OHIF expected fields (lowercase, as per WorkList.tsx line 256-266)
-          studyInstanceUid: xnatExperimentId,
-          StudyInstanceUID: xnatExperimentId,
-          dicomStudyInstanceUid: dicomStudyInstanceUid,
-          DicomStudyInstanceUID: dicomStudyInstanceUid,
+          studyInstanceUid: dicomStudyInstanceUid,
+          StudyInstanceUID: dicomStudyInstanceUid,
+          xnatExperimentId: xnatExperimentId,
+          XnatExperimentID: xnatExperimentId,
           date: formattedDate,  // YYYYMMDD format
           time: String(''),
           description: String(experiment.label || 'No Description'),
