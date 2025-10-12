@@ -211,11 +211,11 @@ function createXNATDataSource(config) {
             return [];
           }
 
-          // Resolve DICOM UID to XNAT experiment ID
-          const resolvedExperimentId = await client.resolveStudyInstanceUID(experimentId);
+          // Resolve DICOM UID to XNAT experiment ID and project ID
+          const { experimentId: resolvedExperimentId, projectId } = await client.resolveStudyInstanceUID(experimentId);
 
-          // Get the study metadata which includes series, passing the original StudyInstanceUID
-          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId);
+          // Get the study metadata which includes series, passing the original StudyInstanceUID and project ID
+          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId, projectId);
           console.log('Study metadata for series search:', studyMetadata);
 
           // Format series for OHIF WorkList
@@ -405,9 +405,9 @@ function createXNATDataSource(config) {
             promise: null,
             start: async () => {
               console.log('🔄 Promise wrapper start() called for study:', StudyInstanceUID);
-              // Resolve DICOM UID to XNAT experiment ID
-              const experimentId = await client.resolveStudyInstanceUID(StudyInstanceUID);
-              const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID);
+              // Resolve DICOM UID to XNAT experiment ID and project ID
+              const { experimentId, projectId } = await client.resolveStudyInstanceUID(StudyInstanceUID);
+              const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID, projectId);
               console.log('🔄 Study metadata retrieved in promise mode:', studyMetadata);
               return await formatSeriesMetadata(studyMetadata);
             }
@@ -416,9 +416,9 @@ function createXNATDataSource(config) {
 
         // Standard path - fetch immediately
         try {
-          // Resolve DICOM UID to XNAT experiment ID
-          const experimentId = await client.resolveStudyInstanceUID(StudyInstanceUID);
-          const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID);
+          // Resolve DICOM UID to XNAT experiment ID and project ID
+          const { experimentId, projectId } = await client.resolveStudyInstanceUID(StudyInstanceUID);
+          const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID, projectId);
           console.log('Study metadata retrieved:', studyMetadata);
           return await formatSeriesMetadata(studyMetadata);
         } catch (error) {

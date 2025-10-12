@@ -156,7 +156,8 @@ class XNATClient {
   }
 
   /**
-   * Resolve DICOM StudyInstanceUID to XNAT experiment ID
+   * Resolve DICOM StudyInstanceUID to XNAT experiment ID and project ID
+   * @returns {Object} {experimentId, projectId}
    */
   async resolveStudyInstanceUID(studyInstanceUID, projectId = null) {
     try {
@@ -177,17 +178,18 @@ class XNATClient {
 
       if (experiments.length > 0) {
         const experimentId = experiments[0].ID;
-        console.log(`Resolved ${studyInstanceUID} to experiment ${experimentId}`);
-        return experimentId;
+        const experimentProjectId = experiments[0].project;
+        console.log(`Resolved ${studyInstanceUID} to experiment ${experimentId} in project ${experimentProjectId}`);
+        return { experimentId, projectId: experimentProjectId };
       }
 
       // If no match found, assume it's already an experiment ID
       console.log(`No match found for UID ${studyInstanceUID}, treating as experiment ID`);
-      return studyInstanceUID;
+      return { experimentId: studyInstanceUID, projectId: null };
     } catch (error) {
       console.error('Error resolving StudyInstanceUID:', error);
       // Fallback: assume it's already an experiment ID
-      return studyInstanceUID;
+      return { experimentId: studyInstanceUID, projectId: null };
     }
   }
 
@@ -210,15 +212,16 @@ class XNATClient {
    * Get Study metadata in DICOM format
    * @param {string} experimentId - XNAT experiment ID
    * @param {string} actualStudyInstanceUID - Required actual DICOM StudyInstanceUID from study list
+   * @param {string} projectId - XNAT project ID
    */
-  async getStudyMetadata(experimentId, actualStudyInstanceUID) {
+  async getStudyMetadata(experimentId, actualStudyInstanceUID, projectId) {
     try {
       // Require actualStudyInstanceUID parameter
       if (!actualStudyInstanceUID) {
         throw new Error(`actualStudyInstanceUID parameter is required for getStudyMetadata (experiment ${experimentId}). Cannot proceed without actual DICOM StudyInstanceUID.`);
       }
 
-      console.log('getStudyMetadata called for experiment:', experimentId, `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...`);
+      console.log('getStudyMetadata called for experiment:', experimentId, `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...`, `project: ${projectId}`);
       const scans = await this.getScans(experimentId);
       console.log(`Found ${scans.length} scans for experiment ${experimentId}`);
 
@@ -236,10 +239,7 @@ class XNATClient {
 
           const modality = this.getModalityFromXsiType(scan.xsiType);
 
-          // Get project ID from scan object
-          const projectId = scan.project || scan['xnat:imagescandata/project'] || '';
-
-          // Try to get actual DICOM metadata from XNAT
+          // Try to get actual DICOM metadata from XNAT (using projectId parameter)
           const dicomMetadata = await this.getScanDicomMetadata(experimentId, scan.ID, projectId);
 
           // Use actual DICOM UIDs if available, otherwise generate them
@@ -474,6 +474,9 @@ class XNATClient {
       if (project) {
         params.project = project;
       }
+
+      const queryString = new URLSearchParams(params).toString();
+      console.log(`Fetching experiments from: ${this.baseUrl}/data/experiments?${queryString}`);
 
       const response = await this.client.get('/data/experiments', { params });
       return response.data?.ResultSet?.Result || [];
