@@ -408,14 +408,15 @@ class XNATClient {
             };
 
             // Add geometric metadata if available from dicomdump
+            // Convert arrays to DICOM format strings (backslash-separated)
             if (orientationArray) {
-              metadata.ImageOrientationPatient = orientationArray;
+              metadata.ImageOrientationPatient = orientationArray.join('\\');
             }
             if (instancePosition) {
-              metadata.ImagePositionPatient = instancePosition;
+              metadata.ImagePositionPatient = instancePosition.join('\\');
             }
             if (spacingArray && spacingArray.length === 2) {
-              metadata.PixelSpacing = spacingArray;
+              metadata.PixelSpacing = spacingArray.join('\\');
               metadata.RowPixelSpacing = spacingArray[0];
               metadata.ColumnPixelSpacing = spacingArray[1];
             }
