@@ -243,6 +243,15 @@ class XNATClient {
           let seriesNumber;
           let seriesDescription;
 
+          // Geometric metadata variables
+          let imageOrientation;
+          let imagePosition;
+          let pixelSpacing;
+          let sliceThickness;
+          let rows;
+          let columns;
+          let sliceLocation;
+
           if (dicomMetadata) {
             // Extract DICOM tags from dicomdump format
             // dicomdump returns ResultSet.Result array with tag1, value, desc
@@ -263,6 +272,15 @@ class XNATClient {
             seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
             seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
 
+            // Extract geometric metadata for proper 3D reconstruction
+            const imageOrientation = getTagValue('(0020,0037)'); // ImageOrientationPatient
+            const imagePosition = getTagValue('(0020,0032)'); // ImagePositionPatient (first slice)
+            const pixelSpacing = getTagValue('(0028,0030)'); // PixelSpacing
+            const sliceThickness = parseFloat(getTagValue('(0018,0050)')) || 1; // SliceThickness
+            const rows = parseInt(getTagValue('(0028,0010)')) || 512; // Rows
+            const columns = parseInt(getTagValue('(0028,0011)')) || 512; // Columns
+            const sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0; // SliceLocation
+
             // Update study-level UID if we got an actual one from dicomdump
             if (actualStudyUID) {
               studyInstanceUID = actualStudyUID;
@@ -279,7 +297,32 @@ class XNATClient {
             scanStudyInstanceUID = studyInstanceUID;
             seriesNumber = parseInt(scan.ID) || 0;
             seriesDescription = scan.series_description || scan.type || 'Unknown';
+
+            // Initialize geometric variables as null (will use defaults)
+            imageOrientation = null;
+            imagePosition = null;
+            pixelSpacing = null;
+            sliceThickness = 1;
+            rows = 512;
+            columns = 512;
+            sliceLocation = 0;
+
             console.log(`Scan ${scan.ID}: Using fallback UIDs (dicomdump unavailable) - Study: ${scanStudyInstanceUID.substring(0, 30)}...`);
+          }
+
+          // Parse geometric data if available from dicomdump
+          let orientationArray = null;
+          let positionArray = null;
+          let spacingArray = null;
+
+          if (imageOrientation) {
+            orientationArray = imageOrientation.split('\\').map(parseFloat);
+          }
+          if (imagePosition) {
+            positionArray = imagePosition.split('\\').map(parseFloat);
+          }
+          if (pixelSpacing) {
+            spacingArray = pixelSpacing.split('\\').map(parseFloat);
           }
 
           // Get all instances for this series - use full URL with baseUrl
@@ -302,23 +345,65 @@ class XNATClient {
               SOPClassUID = '1.2.840.10008.5.1.4.1.1.2'; // Default to CT
             }
 
+            // Calculate ImagePositionPatient for this slice
+            // Position changes along the normal vector (cross product of orientation vectors)
+            let instancePosition = positionArray;
+            if (positionArray && orientationArray && orientationArray.length === 6) {
+              // Calculate normal vector (cross product of row and column orientation)
+              const rowCosines = orientationArray.slice(0, 3);
+              const colCosines = orientationArray.slice(3, 6);
+              const normal = [
+                rowCosines[1] * colCosines[2] - rowCosines[2] * colCosines[1],
+                rowCosines[2] * colCosines[0] - rowCosines[0] * colCosines[2],
+                rowCosines[0] * colCosines[1] - rowCosines[1] * colCosines[0]
+              ];
+
+              // Calculate position for this slice
+              const sliceOffset = index * sliceThickness;
+              instancePosition = [
+                positionArray[0] + normal[0] * sliceOffset,
+                positionArray[1] + normal[1] * sliceOffset,
+                positionArray[2] + normal[2] * sliceOffset
+              ];
+            }
+
+            const metadata = {
+              StudyInstanceUID: scanStudyInstanceUID,
+              SeriesInstanceUID: seriesInstanceUID,
+              SeriesNumber: seriesNumber,
+              SeriesDescription: seriesDescription,
+              SeriesDate: scan.date || '',
+              SeriesTime: '',
+              InstanceNumber: index + 1,
+              SOPInstanceUID: `${seriesInstanceUID}.${index + 1}`,
+              SOPClassUID: SOPClassUID,
+              Modality: modality,
+              NumberOfFrames: 1,
+              Rows: rows,
+              Columns: columns,
+            };
+
+            // Add geometric metadata if available from dicomdump
+            if (orientationArray) {
+              metadata.ImageOrientationPatient = orientationArray;
+            }
+            if (instancePosition) {
+              metadata.ImagePositionPatient = instancePosition;
+            }
+            if (spacingArray && spacingArray.length === 2) {
+              metadata.PixelSpacing = spacingArray;
+              metadata.RowPixelSpacing = spacingArray[0];
+              metadata.ColumnPixelSpacing = spacingArray[1];
+            }
+            if (sliceThickness) {
+              metadata.SliceThickness = sliceThickness;
+              metadata.SpacingBetweenSlices = sliceThickness;
+            }
+            metadata.SliceLocation = sliceLocation + (index * sliceThickness);
+
             return {
               url,
-              metadata: {
-                StudyInstanceUID: scanStudyInstanceUID,
-                SeriesInstanceUID: seriesInstanceUID,
-                SeriesNumber: seriesNumber,
-                SeriesDescription: seriesDescription,
-                SeriesDate: scan.date || '',
-                SeriesTime: '',
-                InstanceNumber: index + 1,
-                SOPInstanceUID: `${seriesInstanceUID}.${index + 1}`,
-                SOPClassUID: SOPClassUID,
-                Modality: modality,
-                NumberOfFrames: 1,
-                Rows: 512,  // Default, will be overwritten when DICOM loads
-                Columns: 512,
-              }
+              metadata
             };
           });
 
