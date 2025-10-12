@@ -271,9 +271,10 @@ class XNATClient {
             const actualSeriesUID = getTagValue('(0020,000E)');
             const actualStudyUID = getTagValue('(0020,000D)');
 
-            // Require actual SeriesInstanceUID
+            // Skip scan if missing SeriesInstanceUID
             if (!actualSeriesUID) {
-              throw new Error(`Missing SeriesInstanceUID (0020,000E) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing SeriesInstanceUID (0020,000E)`);
+              return null;
             }
 
             seriesInstanceUID = actualSeriesUID;
@@ -297,27 +298,33 @@ class XNATClient {
             columns = parseInt(getTagValue('(0028,0011)'));
             sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0;
 
-            // Require critical geometric fields
+            // Skip scan if missing critical geometric fields
             if (!imageOrientation) {
-              throw new Error(`Missing ImageOrientationPatient (0020,0037) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing ImageOrientationPatient (0020,0037)`);
+              return null;
             }
             if (!imagePosition) {
-              throw new Error(`Missing ImagePositionPatient (0020,0032) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing ImagePositionPatient (0020,0032)`);
+              return null;
             }
             if (!pixelSpacing) {
-              throw new Error(`Missing PixelSpacing (0028,0030) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing PixelSpacing (0028,0030)`);
+              return null;
             }
             if (!sliceThickness) {
-              throw new Error(`Missing SliceThickness (0018,0050) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing SliceThickness (0018,0050)`);
+              return null;
             }
             if (!rows || !columns) {
-              throw new Error(`Missing Rows/Columns (0028,0010/0028,0011) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+              console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing Rows/Columns (0028,0010/0028,0011)`);
+              return null;
             }
 
             console.log(`Scan ${scan.ID}: Using actual DICOM metadata - Study: ${scanStudyInstanceUID.substring(0, 30)}..., Series: ${seriesInstanceUID.substring(0, 30)}...`);
           } else {
-            // No DICOM metadata available from dicomdump - throw error
-            throw new Error(`Failed to retrieve DICOM metadata from dicomdump for experiment ${experimentId}, scan ${scan.ID}. Cannot proceed without actual DICOM UIDs and geometric data.`);
+            // No DICOM metadata available from dicomdump - skip this scan
+            console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Failed to retrieve DICOM metadata from dicomdump`);
+            return null;
           }
 
           // Parse geometric data if available from dicomdump
@@ -504,7 +511,16 @@ class XNATClient {
         console.log('Sample imaging experiment:', imagingExperiments[0]);
       }
 
-      const studies = imagingExperiments.map(experiment => {
+      const studies = imagingExperiments
+        .filter(experiment => {
+          // Filter out experiments without DICOM StudyInstanceUID
+          if (!experiment.UID) {
+            console.warn(`Skipping experiment ${experiment.ID || 'unknown'}: Missing DICOM StudyInstanceUID`);
+            return false;
+          }
+          return true;
+        })
+        .map(experiment => {
         const modality = String(this.getModalityFromXsiType(experiment.xsiType));
 
         const rawDate =
@@ -514,13 +530,7 @@ class XNATClient {
           '';
         const formattedDate = String(rawDate || '').replace(/-/g, '');
 
-        // Require actual DICOM StudyInstanceUID from XNAT experiment
         const xnatExperimentId = String(experiment.ID || 'unknown');
-
-        if (!experiment.UID) {
-          throw new Error(`Missing DICOM StudyInstanceUID for XNAT experiment ${xnatExperimentId}. Cannot proceed without actual DICOM UID.`);
-        }
-
         const dicomStudyInstanceUid = String(experiment.UID);
 
         const study = {
