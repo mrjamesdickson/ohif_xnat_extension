@@ -300,14 +300,19 @@ class XNATClient {
           '';
         const formattedDate = String(rawDate || '').replace(/-/g, '');
 
-        const studyInstanceUid = String(
-          experiment.UID || experiment.ID || 'unknown'
+        // Preserve the XNAT experiment ID for metadata retrieval while
+        // still exposing the actual DICOM StudyInstanceUID when available.
+        const xnatExperimentId = String(experiment.ID || 'unknown');
+        const dicomStudyInstanceUid = String(
+          experiment.UID || xnatExperimentId
         );
 
         const study = {
           // OHIF expected fields (lowercase, as per WorkList.tsx line 256-266)
-          studyInstanceUid: studyInstanceUid,
-          StudyInstanceUID: studyInstanceUid,
+          studyInstanceUid: xnatExperimentId,
+          StudyInstanceUID: xnatExperimentId,
+          dicomStudyInstanceUid: dicomStudyInstanceUid,
+          DicomStudyInstanceUID: dicomStudyInstanceUid,
           date: formattedDate,  // YYYYMMDD format
           time: String(''),
           description: String(experiment.label || 'No Description'),
