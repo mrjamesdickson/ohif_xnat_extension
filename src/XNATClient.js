@@ -209,16 +209,21 @@ class XNATClient {
   /**
    * Get Study metadata in DICOM format
    * @param {string} experimentId - XNAT experiment ID
-   * @param {string} actualStudyInstanceUID - Optional actual DICOM StudyInstanceUID from study list
+   * @param {string} actualStudyInstanceUID - Required actual DICOM StudyInstanceUID from study list
    */
-  async getStudyMetadata(experimentId, actualStudyInstanceUID = null) {
+  async getStudyMetadata(experimentId, actualStudyInstanceUID) {
     try {
-      console.log('getStudyMetadata called for experiment:', experimentId, actualStudyInstanceUID ? `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...` : '');
+      // Require actualStudyInstanceUID parameter
+      if (!actualStudyInstanceUID) {
+        throw new Error(`actualStudyInstanceUID parameter is required for getStudyMetadata (experiment ${experimentId}). Cannot proceed without actual DICOM StudyInstanceUID.`);
+      }
+
+      console.log('getStudyMetadata called for experiment:', experimentId, `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...`);
       const scans = await this.getScans(experimentId);
       console.log(`Found ${scans.length} scans for experiment ${experimentId}`);
 
-      // Use provided StudyInstanceUID or generate fallback
-      let studyInstanceUID = actualStudyInstanceUID || `2.25.${experimentId}`;
+      // Use provided StudyInstanceUID (no fallback)
+      let studyInstanceUID = actualStudyInstanceUID;
 
       const series = await Promise.all(
         scans.map(async scan => {
@@ -266,48 +271,53 @@ class XNATClient {
             const actualSeriesUID = getTagValue('(0020,000E)');
             const actualStudyUID = getTagValue('(0020,000D)');
 
-            seriesInstanceUID = actualSeriesUID || `2.25.${experimentId}.${scan.ID}`;
-            // Use dicomdump UID if available, otherwise use the study-level UID (which could be from parameter or generated)
-            scanStudyInstanceUID = actualStudyUID || studyInstanceUID;
-            seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
-            seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
+            // Require actual SeriesInstanceUID
+            if (!actualSeriesUID) {
+              throw new Error(`Missing SeriesInstanceUID (0020,000E) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+            }
 
-            // Extract geometric metadata for proper 3D reconstruction
-            const imageOrientation = getTagValue('(0020,0037)'); // ImageOrientationPatient
-            const imagePosition = getTagValue('(0020,0032)'); // ImagePositionPatient (first slice)
-            const pixelSpacing = getTagValue('(0028,0030)'); // PixelSpacing
-            const sliceThickness = parseFloat(getTagValue('(0018,0050)')) || 1; // SliceThickness
-            const rows = parseInt(getTagValue('(0028,0010)')) || 512; // Rows
-            const columns = parseInt(getTagValue('(0028,0011)')) || 512; // Columns
-            const sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0; // SliceLocation
+            seriesInstanceUID = actualSeriesUID;
+            // Use dicomdump StudyInstanceUID if available, otherwise use the provided one
+            scanStudyInstanceUID = actualStudyUID || studyInstanceUID;
 
             // Update study-level UID if we got an actual one from dicomdump
             if (actualStudyUID) {
               studyInstanceUID = actualStudyUID;
             }
 
-            if (actualSeriesUID) {
-              console.log(`Scan ${scan.ID}: Using actual DICOM UIDs - Study: ${scanStudyInstanceUID.substring(0, 30)}..., Series: ${seriesInstanceUID.substring(0, 30)}...`);
-            } else {
-              console.log(`Scan ${scan.ID}: Using generated UIDs (metadata unavailable)`);
+            seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
+            seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
+
+            // Extract geometric metadata for proper 3D reconstruction
+            imageOrientation = getTagValue('(0020,0037)'); // ImageOrientationPatient
+            imagePosition = getTagValue('(0020,0032)'); // ImagePositionPatient (first slice)
+            pixelSpacing = getTagValue('(0028,0030)'); // PixelSpacing
+            sliceThickness = parseFloat(getTagValue('(0018,0050)'));
+            rows = parseInt(getTagValue('(0028,0010)'));
+            columns = parseInt(getTagValue('(0028,0011)'));
+            sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0;
+
+            // Require critical geometric fields
+            if (!imageOrientation) {
+              throw new Error(`Missing ImageOrientationPatient (0020,0037) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
             }
+            if (!imagePosition) {
+              throw new Error(`Missing ImagePositionPatient (0020,0032) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+            }
+            if (!pixelSpacing) {
+              throw new Error(`Missing PixelSpacing (0028,0030) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+            }
+            if (!sliceThickness) {
+              throw new Error(`Missing SliceThickness (0018,0050) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+            }
+            if (!rows || !columns) {
+              throw new Error(`Missing Rows/Columns (0028,0010/0028,0011) in DICOM metadata for experiment ${experimentId}, scan ${scan.ID}`);
+            }
+
+            console.log(`Scan ${scan.ID}: Using actual DICOM metadata - Study: ${scanStudyInstanceUID.substring(0, 30)}..., Series: ${seriesInstanceUID.substring(0, 30)}...`);
           } else {
-            // Fallback: use study-level UID (from parameter or generated) and generate series UID
-            seriesInstanceUID = `2.25.${experimentId}.${scan.ID}`;
-            scanStudyInstanceUID = studyInstanceUID;
-            seriesNumber = parseInt(scan.ID) || 0;
-            seriesDescription = scan.series_description || scan.type || 'Unknown';
-
-            // Initialize geometric variables as null (will use defaults)
-            imageOrientation = null;
-            imagePosition = null;
-            pixelSpacing = null;
-            sliceThickness = 1;
-            rows = 512;
-            columns = 512;
-            sliceLocation = 0;
-
-            console.log(`Scan ${scan.ID}: Using fallback UIDs (dicomdump unavailable) - Study: ${scanStudyInstanceUID.substring(0, 30)}...`);
+            // No DICOM metadata available from dicomdump - throw error
+            throw new Error(`Failed to retrieve DICOM metadata from dicomdump for experiment ${experimentId}, scan ${scan.ID}. Cannot proceed without actual DICOM UIDs and geometric data.`);
           }
 
           // Parse geometric data if available from dicomdump
@@ -504,12 +514,14 @@ class XNATClient {
           '';
         const formattedDate = String(rawDate || '').replace(/-/g, '');
 
-        // Preserve the XNAT experiment ID for metadata retrieval while
-        // still exposing the actual DICOM StudyInstanceUID when available.
+        // Require actual DICOM StudyInstanceUID from XNAT experiment
         const xnatExperimentId = String(experiment.ID || 'unknown');
-        const dicomStudyInstanceUid = String(
-          experiment.UID || xnatExperimentId
-        );
+
+        if (!experiment.UID) {
+          throw new Error(`Missing DICOM StudyInstanceUID for XNAT experiment ${xnatExperimentId}. Cannot proceed without actual DICOM UID.`);
+        }
+
+        const dicomStudyInstanceUid = String(experiment.UID);
 
         const study = {
           // OHIF expected fields (lowercase, as per WorkList.tsx line 256-266)
