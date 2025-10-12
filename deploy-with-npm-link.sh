@@ -161,7 +161,7 @@ if [ "$RESTART_SERVER" = true ]; then
     # Start dev server in background
     echo "  Starting dev server..."
     cd "$OHIF_ROOT/platform/app"
-    APP_CONFIG=xnat yarn run dev:fast > /tmp/ohif-dev.log 2>&1 &
+    APP_CONFIG=config/xnat.js yarn run dev > /tmp/ohif-dev.log 2>&1 &
     DEV_PID=$!
     echo -e "${GREEN}✓ Dev server started (PID: $DEV_PID)${NC}"
     echo -e "${BLUE}  Log file: /tmp/ohif-dev.log${NC}"

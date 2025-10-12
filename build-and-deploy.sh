@@ -510,13 +510,13 @@ echo -e "${YELLOW}3. Start OHIF Viewer${NC}"
 echo "   cd $OHIF_ROOT"
 if [ "$OHIF_PKG_MANAGER" = "yarn" ]; then
     if [ "$CONFIG_LOADED" = true ]; then
-        echo "   APP_CONFIG=xnat yarn run dev"
+        echo "   APP_CONFIG=config/xnat.js yarn run dev"
     else
         echo "   yarn run dev"
     fi
 else
     if [ "$CONFIG_LOADED" = true ]; then
-        echo "   APP_CONFIG=xnat npm run dev"
+        echo "   APP_CONFIG=config/xnat.js npm run dev"
     else
         echo "   npm run dev"
     fi
@@ -570,9 +570,9 @@ if [ "$RESTART_SERVER" = true ]; then
 
     if [ "$CONFIG_LOADED" = true ]; then
         if [ "$OHIF_PKG_MANAGER" = "yarn" ]; then
-            APP_CONFIG=xnat yarn run dev > /tmp/ohif-dev.log 2>&1 &
+            APP_CONFIG=config/xnat.js yarn run dev > /tmp/ohif-dev.log 2>&1 &
         else
-            APP_CONFIG=xnat npm run dev > /tmp/ohif-dev.log 2>&1 &
+            APP_CONFIG=config/xnat.js npm run dev > /tmp/ohif-dev.log 2>&1 &
         fi
     else
         if [ "$OHIF_PKG_MANAGER" = "yarn" ]; then
