@@ -8,24 +8,24 @@ An OHIF extension that enables pulling and displaying DICOM images from remote X
 # 1. Configure XNAT credentials interactively
 ./setup-config.sh
 
-# 2. Build and deploy to your OHIF installation using npm link
-./deploy-with-npm-link.sh /path/to/ohif-viewer --restart
+# 2. Build and deploy to your OHIF installation
+./build-and-deploy.sh /path/to/ohif-viewer --restart
 
 # This command will:
 # - Build the extension
 # - Link it using npm link
 # - Apply necessary hotfixes
 # - Update pluginConfig.json
-# - Start the dev server with rsbuild (APP_CONFIG=xnat yarn run dev:fast)
+# - Start the dev server with webpack (APP_CONFIG=config/xnat.js yarn run dev)
 ```
 
-**Alternative: Manual build and deploy:**
+**Alternative: Deploy without restarting server:**
 ```bash
 ./build-and-deploy.sh /path/to/ohif-viewer
 
-# Then start OHIF with auto-generated config
-cd /path/to/ohif-viewer
-APP_CONFIG=xnat yarn run dev
+# Then manually start OHIF with auto-generated config
+cd /path/to/ohif-viewer/platform/app
+APP_CONFIG=config/xnat.js yarn run dev
 ```
 
 The setup script will guide you through configuring your XNAT connection. The deployment script then automatically creates a ready-to-use `xnat.js` configuration file.
@@ -298,15 +298,15 @@ Or use the all-in-one build and deploy script:
 
 ### Local Development
 
-**Recommended: Use npm link for live development:**
+**Recommended: Use build-and-deploy.sh for live development:**
 
 ```bash
 # Deploy with npm link (automatically builds, links, and starts server)
-./deploy-with-npm-link.sh /path/to/ohif-viewer --restart
+./build-and-deploy.sh /path/to/ohif-viewer --restart
 ```
 
 The dev server will run with:
-- **Command:** `APP_CONFIG=xnat yarn run dev:fast` (uses rsbuild)
+- **Command:** `APP_CONFIG=config/xnat.js yarn run dev` (uses webpack)
 - **Working directory:** `/path/to/ohif-viewer/platform/app`
 - **Logs:** `/tmp/ohif-dev.log`
 
