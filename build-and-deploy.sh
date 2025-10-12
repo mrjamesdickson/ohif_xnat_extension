@@ -383,6 +383,9 @@ if [ "$CONFIG_LOADED" = true ]; then
 window.config = {
   name: 'config/xnat.js',
   routerBasename: '/',
+  dangerouslyUseDynamicConfig: {
+    enabled: false,
+  },
   extensions: [
     '@ohif/extension-xnat-datasource',
     '@ohif/extension-default',
