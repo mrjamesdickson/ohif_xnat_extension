@@ -215,7 +215,8 @@ class XNATClient {
       const scans = await this.getScans(experimentId);
       console.log(`Found ${scans.length} scans for experiment ${experimentId}`);
 
-      const studyInstanceUID = experimentId; // XNAT experiment ID can map to Study Instance UID
+      // Will be set from first scan's DICOM metadata
+      let studyInstanceUID = `2.25.${experimentId}`; // Fallback
 
       const series = await Promise.all(
         scans.map(async scan => {
@@ -236,7 +237,7 @@ class XNATClient {
 
           // Use actual DICOM UIDs if available, otherwise generate them
           let seriesInstanceUID;
-          let studyInstanceUID;
+          let scanStudyInstanceUID;
           let seriesNumber;
           let seriesDescription;
 
@@ -251,19 +252,31 @@ class XNATClient {
               return tag?.value || null;
             };
 
-            seriesInstanceUID = getTagValue('(0020,000E)') || `2.25.${experimentId}.${scan.ID}`;
-            studyInstanceUID = getTagValue('(0020,000D)') || `2.25.${experimentId}`;
+            const actualSeriesUID = getTagValue('(0020,000E)');
+            const actualStudyUID = getTagValue('(0020,000D)');
+
+            seriesInstanceUID = actualSeriesUID || `2.25.${experimentId}.${scan.ID}`;
+            scanStudyInstanceUID = actualStudyUID || `2.25.${experimentId}`;
             seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
             seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
 
-            console.log(`Scan ${scan.ID}: Using actual DICOM SeriesInstanceUID: ${seriesInstanceUID}`);
+            // Update study-level UID if we got an actual one
+            if (actualStudyUID && studyInstanceUID.startsWith('2.25.')) {
+              studyInstanceUID = actualStudyUID;
+            }
+
+            if (actualSeriesUID) {
+              console.log(`Scan ${scan.ID}: Using actual DICOM UIDs - Study: ${scanStudyInstanceUID.substring(0, 30)}..., Series: ${seriesInstanceUID.substring(0, 30)}...`);
+            } else {
+              console.log(`Scan ${scan.ID}: Using generated UIDs (metadata unavailable)`);
+            }
           } else {
             // Fallback to generated UIDs
             seriesInstanceUID = `2.25.${experimentId}.${scan.ID}`;
-            studyInstanceUID = `2.25.${experimentId}`;
+            scanStudyInstanceUID = `2.25.${experimentId}`;
             seriesNumber = parseInt(scan.ID) || 0;
             seriesDescription = scan.series_description || scan.type || 'Unknown';
-            console.log(`Scan ${scan.ID}: Using generated SeriesInstanceUID (metadata unavailable)`);
+            console.log(`Scan ${scan.ID}: Using generated UIDs (metadata unavailable)`);
           }
 
           // Get all instances for this series - use full URL with baseUrl
@@ -289,7 +302,7 @@ class XNATClient {
             return {
               url,
               metadata: {
-                StudyInstanceUID: studyInstanceUID,
+                StudyInstanceUID: scanStudyInstanceUID,
                 SeriesInstanceUID: seriesInstanceUID,
                 SeriesNumber: seriesNumber,
                 SeriesDescription: seriesDescription,
