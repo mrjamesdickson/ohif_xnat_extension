@@ -211,8 +211,11 @@ function createXNATDataSource(config) {
             return [];
           }
 
+          // Resolve DICOM UID to XNAT experiment ID
+          const resolvedExperimentId = await client.resolveStudyInstanceUID(experimentId);
+
           // Get the study metadata which includes series
-          const studyMetadata = await client.getStudyMetadata(experimentId);
+          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId);
           console.log('Study metadata for series search:', studyMetadata);
 
           // Format series for OHIF WorkList
