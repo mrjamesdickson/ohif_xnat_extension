@@ -214,8 +214,8 @@ function createXNATDataSource(config) {
           // Resolve DICOM UID to XNAT experiment ID
           const resolvedExperimentId = await client.resolveStudyInstanceUID(experimentId);
 
-          // Get the study metadata which includes series
-          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId);
+          // Get the study metadata which includes series, passing the original StudyInstanceUID
+          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId);
           console.log('Study metadata for series search:', studyMetadata);
 
           // Format series for OHIF WorkList
@@ -407,7 +407,7 @@ function createXNATDataSource(config) {
               console.log('🔄 Promise wrapper start() called for study:', StudyInstanceUID);
               // Resolve DICOM UID to XNAT experiment ID
               const experimentId = await client.resolveStudyInstanceUID(StudyInstanceUID);
-              const studyMetadata = await client.getStudyMetadata(experimentId);
+              const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID);
               console.log('🔄 Study metadata retrieved in promise mode:', studyMetadata);
               return await formatSeriesMetadata(studyMetadata);
             }
@@ -418,7 +418,7 @@ function createXNATDataSource(config) {
         try {
           // Resolve DICOM UID to XNAT experiment ID
           const experimentId = await client.resolveStudyInstanceUID(StudyInstanceUID);
-          const studyMetadata = await client.getStudyMetadata(experimentId);
+          const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID);
           console.log('Study metadata retrieved:', studyMetadata);
           return await formatSeriesMetadata(studyMetadata);
         } catch (error) {

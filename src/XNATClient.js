@@ -208,15 +208,17 @@ class XNATClient {
 
   /**
    * Get Study metadata in DICOM format
+   * @param {string} experimentId - XNAT experiment ID
+   * @param {string} actualStudyInstanceUID - Optional actual DICOM StudyInstanceUID from study list
    */
-  async getStudyMetadata(experimentId) {
+  async getStudyMetadata(experimentId, actualStudyInstanceUID = null) {
     try {
-      console.log('getStudyMetadata called for experiment:', experimentId);
+      console.log('getStudyMetadata called for experiment:', experimentId, actualStudyInstanceUID ? `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...` : '');
       const scans = await this.getScans(experimentId);
       console.log(`Found ${scans.length} scans for experiment ${experimentId}`);
 
-      // Will be set from first scan's DICOM metadata
-      let studyInstanceUID = `2.25.${experimentId}`; // Fallback
+      // Use provided StudyInstanceUID or generate fallback
+      let studyInstanceUID = actualStudyInstanceUID || `2.25.${experimentId}`;
 
       const series = await Promise.all(
         scans.map(async scan => {
@@ -256,12 +258,13 @@ class XNATClient {
             const actualStudyUID = getTagValue('(0020,000D)');
 
             seriesInstanceUID = actualSeriesUID || `2.25.${experimentId}.${scan.ID}`;
-            scanStudyInstanceUID = actualStudyUID || `2.25.${experimentId}`;
+            // Use dicomdump UID if available, otherwise use the study-level UID (which could be from parameter or generated)
+            scanStudyInstanceUID = actualStudyUID || studyInstanceUID;
             seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
             seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
 
-            // Update study-level UID if we got an actual one
-            if (actualStudyUID && studyInstanceUID.startsWith('2.25.')) {
+            // Update study-level UID if we got an actual one from dicomdump
+            if (actualStudyUID) {
               studyInstanceUID = actualStudyUID;
             }
 
@@ -271,12 +274,12 @@ class XNATClient {
               console.log(`Scan ${scan.ID}: Using generated UIDs (metadata unavailable)`);
             }
           } else {
-            // Fallback to generated UIDs
+            // Fallback: use study-level UID (from parameter or generated) and generate series UID
             seriesInstanceUID = `2.25.${experimentId}.${scan.ID}`;
-            scanStudyInstanceUID = `2.25.${experimentId}`;
+            scanStudyInstanceUID = studyInstanceUID;
             seriesNumber = parseInt(scan.ID) || 0;
             seriesDescription = scan.series_description || scan.type || 'Unknown';
-            console.log(`Scan ${scan.ID}: Using generated UIDs (metadata unavailable)`);
+            console.log(`Scan ${scan.ID}: Using fallback UIDs (dicomdump unavailable) - Study: ${scanStudyInstanceUID.substring(0, 30)}...`);
           }
 
           // Get all instances for this series - use full URL with baseUrl
