@@ -150,6 +150,15 @@ if [ "$RESTART_SERVER" = true ]; then
     echo -e "${BLUE}  Log file: /tmp/ohif-dev.log${NC}"
     echo -e "${BLUE}  To stop: kill $DEV_PID${NC}"
     echo ""
-fi
 
-echo -e "${GREEN}Deployment completed successfully!${NC}"
+    # Wait for server to start generating logs
+    echo "  Waiting for server to start..."
+    sleep 3
+
+    # Tail the logs
+    echo -e "${YELLOW}Tailing logs (Ctrl+C to exit, server will keep running)...${NC}"
+    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
+    tail -f /tmp/ohif-dev.log
+else
+    echo -e "${GREEN}Deployment completed successfully!${NC}"
+fi
