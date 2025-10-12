@@ -62,9 +62,26 @@ echo ""
 # ============================================================================
 echo -e "${YELLOW}[2/5] Linking extension...${NC}"
 cd "$SCRIPT_DIR"
+
+# Remove node_modules to avoid dependency conflicts
+if [ -d "node_modules" ]; then
+    echo "  Removing node_modules from extension to prevent dependency conflicts..."
+    rm -rf node_modules
+fi
+
 npm link
 cd "$OHIF_ROOT"
 npm link @ohif/extension-xnat-datasource --legacy-peer-deps
+
+# Also remove node_modules from the symlinked location
+if [ -L "node_modules/@ohif/extension-xnat-datasource" ]; then
+    LINK_TARGET=$(readlink "node_modules/@ohif/extension-xnat-datasource")
+    if [ -d "$LINK_TARGET/node_modules" ]; then
+        echo "  Removing node_modules from linked extension directory..."
+        rm -rf "$LINK_TARGET/node_modules"
+    fi
+fi
+
 echo -e "${GREEN}✓ Extension linked successfully${NC}"
 echo ""
 
@@ -150,6 +167,15 @@ if [ "$RESTART_SERVER" = true ]; then
     echo -e "${BLUE}  Log file: /tmp/ohif-dev.log${NC}"
     echo -e "${BLUE}  To stop: kill $DEV_PID${NC}"
     echo ""
-fi
 
-echo -e "${GREEN}Deployment completed successfully!${NC}"
+    # Wait for server to start generating logs
+    echo "  Waiting for server to start..."
+    sleep 3
+
+    # Tail the logs
+    echo -e "${YELLOW}Tailing logs (Ctrl+C to exit, server will keep running)...${NC}"
+    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
+    tail -f /tmp/ohif-dev.log
+else
+    echo -e "${GREEN}Deployment completed successfully!${NC}"
+fi

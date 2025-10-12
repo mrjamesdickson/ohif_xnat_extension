@@ -43,6 +43,7 @@ cp .env.example .env
 - Retrieve and display DICOM images in OHIF Viewer
 - Support for both basic authentication and token-based authentication
 - Automatic metadata extraction and mapping to DICOM standards
+- **Retrieves actual DICOM SeriesInstanceUID from XNAT metadata** - Uses real DICOM UIDs for proper cross-system compatibility, with automatic fallback to generated UIDs if metadata is unavailable
 
 ## Installation
 
@@ -218,6 +219,7 @@ http://localhost:3000/?StudyInstanceUID=EXPERIMENT_ID
    - Authentication (Basic and Token)
    - Project/Subject/Experiment/Scan retrieval
    - DICOM file download
+   - DICOM metadata retrieval for actual SeriesInstanceUID values
 
 2. **XNATDataSource** - OHIF data source implementation
    - Study querying and retrieval
@@ -252,6 +254,7 @@ Cornerstone (Display)
 - `/data/projects/{project}/subjects/{subject}/experiments` - List experiments
 - `/data/experiments/{experiment}/scans` - List scans in an experiment
 - `/data/experiments/{experiment}/scans/{scan}/resources/DICOM/files` - List DICOM files
+- `/data/experiments/{experiment}/scans/{scan}/resources/DICOM/metadata` - Get DICOM metadata including SeriesInstanceUID
 - File download endpoints for DICOM retrieval
 
 ## Development
@@ -359,6 +362,18 @@ APP_CONFIG=xnat yarn run dev
 - Check file permissions in XNAT
 - Ensure transfer syntax is supported
 - Check network tab for failed requests
+
+### Build Issues
+
+**Error: `Package subpath '.' is not defined by "exports"`**
+- This occurs when the extension's `package.json` points to `src/` instead of `dist/`
+- Solution: Ensure `package.json` has:
+  ```json
+  "main": "dist/index.js",
+  "module": "dist/index.js"
+  ```
+- Run `npm run build` before deploying
+- The `dist/` folder contains the built extension without conflicting dependencies
 
 ### CORS Configuration
 

@@ -122,6 +122,34 @@ class XNATClient {
   }
 
   /**
+   * Get DICOM metadata for a scan from XNAT
+   * This retrieves actual DICOM tags including SeriesInstanceUID
+   */
+  async getScanDicomMetadata(experimentId, scanId) {
+    try {
+      const response = await this.client.get(
+        `/data/experiments/${experimentId}/scans/${scanId}/resources/DICOM/metadata`,
+        { params: { format: 'json' } }
+      );
+
+      // XNAT returns an array of DICOM metadata (one per file)
+      const metadataArray = response.data?.ResultSet?.Result || [];
+
+      if (metadataArray.length > 0) {
+        // Return the first file's metadata which should contain series-level info
+        console.log(`Retrieved DICOM metadata for scan ${scanId}`);
+        return metadataArray[0];
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`Error fetching DICOM metadata for scan ${scanId}:`, error.message);
+      // Return null instead of throwing - we'll fall back to generated UIDs
+      return null;
+    }
+  }
+
+  /**
    * Download a DICOM file
    */
   async downloadDicomFile(fileUri) {
@@ -158,10 +186,30 @@ class XNATClient {
 
           const modality = this.getModalityFromXsiType(scan.xsiType);
 
-          // Generate proper DICOM UIDs
-          // Use XNAT base OID (2.25 is for UUID-derived UIDs)
-          const seriesInstanceUID = `2.25.${experimentId}.${scan.ID}`;
-          const studyInstanceUID = `2.25.${experimentId}`;
+          // Try to get actual DICOM metadata from XNAT
+          const dicomMetadata = await this.getScanDicomMetadata(experimentId, scan.ID);
+
+          // Use actual DICOM UIDs if available, otherwise generate them
+          let seriesInstanceUID;
+          let studyInstanceUID;
+          let seriesNumber;
+          let seriesDescription;
+
+          if (dicomMetadata) {
+            // Extract DICOM tags from metadata
+            seriesInstanceUID = dicomMetadata['0020000E']?.Value || `2.25.${experimentId}.${scan.ID}`;
+            studyInstanceUID = dicomMetadata['0020000D']?.Value || `2.25.${experimentId}`;
+            seriesNumber = dicomMetadata['00200011']?.Value || parseInt(scan.ID) || 0;
+            seriesDescription = dicomMetadata['0008103E']?.Value || scan.series_description || scan.type || 'Unknown';
+            console.log(`Scan ${scan.ID}: Using actual DICOM SeriesInstanceUID: ${seriesInstanceUID}`);
+          } else {
+            // Fallback to generated UIDs
+            seriesInstanceUID = `2.25.${experimentId}.${scan.ID}`;
+            studyInstanceUID = `2.25.${experimentId}`;
+            seriesNumber = parseInt(scan.ID) || 0;
+            seriesDescription = scan.series_description || scan.type || 'Unknown';
+            console.log(`Scan ${scan.ID}: Using generated SeriesInstanceUID (metadata unavailable)`);
+          }
 
           // Get all instances for this series - use full URL with baseUrl
           const instances = files.map((file, index) => {
@@ -188,8 +236,8 @@ class XNATClient {
               metadata: {
                 StudyInstanceUID: studyInstanceUID,
                 SeriesInstanceUID: seriesInstanceUID,
-                SeriesNumber: parseInt(scan.ID) || index + 1,
-                SeriesDescription: scan.series_description || scan.type || 'Unknown',
+                SeriesNumber: seriesNumber,
+                SeriesDescription: seriesDescription,
                 SeriesDate: scan.date || '',
                 SeriesTime: '',
                 InstanceNumber: index + 1,
@@ -203,12 +251,12 @@ class XNATClient {
             };
           });
 
-          console.log(`Scan ${scan.ID}: xsiType=${scan.xsiType}, modality=${modality}, desc=${scan.series_description}`);
+          console.log(`Scan ${scan.ID}: xsiType=${scan.xsiType}, modality=${modality}, desc=${seriesDescription}`);
 
           return {
             SeriesInstanceUID: seriesInstanceUID,
-            SeriesNumber: parseInt(scan.ID) || 0,
-            SeriesDescription: scan.series_description || scan.type || 'Unknown',
+            SeriesNumber: seriesNumber,
+            SeriesDescription: seriesDescription,
             Modality: modality,
             instances,
           };
