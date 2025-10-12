@@ -62,9 +62,26 @@ echo ""
 # ============================================================================
 echo -e "${YELLOW}[2/5] Linking extension...${NC}"
 cd "$SCRIPT_DIR"
+
+# Remove node_modules to avoid dependency conflicts
+if [ -d "node_modules" ]; then
+    echo "  Removing node_modules from extension to prevent dependency conflicts..."
+    rm -rf node_modules
+fi
+
 npm link
 cd "$OHIF_ROOT"
 npm link @ohif/extension-xnat-datasource --legacy-peer-deps
+
+# Also remove node_modules from the symlinked location
+if [ -L "node_modules/@ohif/extension-xnat-datasource" ]; then
+    LINK_TARGET=$(readlink "node_modules/@ohif/extension-xnat-datasource")
+    if [ -d "$LINK_TARGET/node_modules" ]; then
+        echo "  Removing node_modules from linked extension directory..."
+        rm -rf "$LINK_TARGET/node_modules"
+    fi
+fi
+
 echo -e "${GREEN}✓ Extension linked successfully${NC}"
 echo ""
 
