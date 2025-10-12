@@ -4,8 +4,8 @@
   "description": "OHIF extension for pulling and displaying images from XNAT",
   "author": "OHIF",
   "license": "MIT",
-  "main": "src/index.js",
-  "module": "src/index.js",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
   "files": [
     "dist",
     "src",
