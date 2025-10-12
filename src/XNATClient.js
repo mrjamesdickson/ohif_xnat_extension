@@ -122,23 +122,29 @@ class XNATClient {
   }
 
   /**
-   * Get DICOM metadata for a scan from XNAT
+   * Get DICOM metadata for a scan from XNAT using dicomdump service
    * This retrieves actual DICOM tags including SeriesInstanceUID
    */
-  async getScanDicomMetadata(experimentId, scanId) {
+  async getScanDicomMetadata(experimentId, scanId, projectId) {
     try {
+      // Use XNAT's dicomdump service for better metadata extraction
+      const src = `/archive/projects/${projectId}/experiments/${experimentId}/scans/${scanId}`;
       const response = await this.client.get(
-        `/data/experiments/${experimentId}/scans/${scanId}/resources/DICOM/metadata`,
-        { params: { format: 'json' } }
+        `/REST/services/dicomdump`,
+        {
+          params: {
+            src: src,
+            format: 'json'
+          }
+        }
       );
 
-      // XNAT returns an array of DICOM metadata (one per file)
-      const metadataArray = response.data?.ResultSet?.Result || [];
+      // dicomdump returns DICOM tags in a different format
+      const dicomData = response.data;
 
-      if (metadataArray.length > 0) {
-        // Return the first file's metadata which should contain series-level info
-        console.log(`Retrieved DICOM metadata for scan ${scanId}`);
-        return metadataArray[0];
+      if (dicomData && typeof dicomData === 'object') {
+        console.log(`Retrieved DICOM metadata for scan ${scanId} via dicomdump`);
+        return dicomData;
       }
 
       return null;
@@ -186,8 +192,11 @@ class XNATClient {
 
           const modality = this.getModalityFromXsiType(scan.xsiType);
 
+          // Get project ID from scan object
+          const projectId = scan.project || scan['xnat:imagescandata/project'] || '';
+
           // Try to get actual DICOM metadata from XNAT
-          const dicomMetadata = await this.getScanDicomMetadata(experimentId, scan.ID);
+          const dicomMetadata = await this.getScanDicomMetadata(experimentId, scan.ID, projectId);
 
           // Use actual DICOM UIDs if available, otherwise generate them
           let seriesInstanceUID;
@@ -196,11 +205,21 @@ class XNATClient {
           let seriesDescription;
 
           if (dicomMetadata) {
-            // Extract DICOM tags from metadata
-            seriesInstanceUID = dicomMetadata['0020000E']?.Value || `2.25.${experimentId}.${scan.ID}`;
-            studyInstanceUID = dicomMetadata['0020000D']?.Value || `2.25.${experimentId}`;
-            seriesNumber = dicomMetadata['00200011']?.Value || parseInt(scan.ID) || 0;
-            seriesDescription = dicomMetadata['0008103E']?.Value || scan.series_description || scan.type || 'Unknown';
+            // Extract DICOM tags from dicomdump format
+            // dicomdump returns ResultSet.Result array with tag1, value, desc
+            const results = dicomMetadata.ResultSet?.Result || [];
+
+            // Helper function to find tag value
+            const getTagValue = (tagPattern) => {
+              const tag = results.find(item => item.tag1 === tagPattern);
+              return tag?.value || null;
+            };
+
+            seriesInstanceUID = getTagValue('(0020,000E)') || `2.25.${experimentId}.${scan.ID}`;
+            studyInstanceUID = getTagValue('(0020,000D)') || `2.25.${experimentId}`;
+            seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
+            seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
+
             console.log(`Scan ${scan.ID}: Using actual DICOM SeriesInstanceUID: ${seriesInstanceUID}`);
           } else {
             // Fallback to generated UIDs
