@@ -271,6 +271,12 @@ class XNATClient {
             const actualSeriesUID = getTagValue('(0020,000E)');
             const actualStudyUID = getTagValue('(0020,000D)');
 
+            const numberOfFrames = parseInt(getTagValue('(0028,0008)')) || 1;
+            const frameIncrementPointer = getTagValue('(0028,0009)');
+            const frameTime = parseFloat(getTagValue('(0018,1063)')) || null;
+            const frameTimeVector = getTagValue('(0018,1065)');
+            const temporalPositionIndex = parseInt(getTagValue('(0020,9128)')) || null;
+
             // Skip scan if missing SeriesInstanceUID
             if (!actualSeriesUID) {
               console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing SeriesInstanceUID (0020,000E)`);
@@ -391,6 +397,10 @@ class XNATClient {
               ];
             }
 
+            const actualSOPInstanceUID = getTagValue('(0008,0018)');
+            const frameOfReferenceUID = getTagValue('(0020,0052)');
+            const instanceNumberValue = parseInt(getTagValue('(0020,0013)')) || index + 1;
+
             const metadata = {
               StudyInstanceUID: scanStudyInstanceUID,
               SeriesInstanceUID: seriesInstanceUID,
@@ -398,13 +408,18 @@ class XNATClient {
               SeriesDescription: seriesDescription,
               SeriesDate: scan.date || '',
               SeriesTime: '',
-              InstanceNumber: index + 1,
-              SOPInstanceUID: `${seriesInstanceUID}.${index + 1}`,
+              InstanceNumber: instanceNumberValue,
+              SOPInstanceUID: actualSOPInstanceUID || `${seriesInstanceUID}.${index + 1}`,
               SOPClassUID: SOPClassUID,
               Modality: modality,
-              NumberOfFrames: 1,
+              NumberOfFrames: numberOfFrames,
+              FrameIncrementPointer: frameIncrementPointer,
+              FrameTime: frameTime,
+              FrameTimeVector: frameTimeVector,
+              TemporalPositionIndex: temporalPositionIndex,
               Rows: rows,
               Columns: columns,
+              FrameOfReferenceUID: frameOfReferenceUID,
             };
 
             // Add geometric metadata if available from dicomdump

@@ -87,6 +87,14 @@ function createXNATDataSource(config) {
         PhotometricInterpretation: dataSet.string('x00280004'),
         PlanarConfiguration: dataSet.uint16('x00280006'),
         PixelAspectRatio: dataSet.string('x00280034'),
+        NumberOfFrames: dataSet.intString('x00280008') || dataSet.uint16('x00280008') || 1,
+        FrameIncrementPointer: dataSet.string('x00280009'),
+        FrameTime: dataSet.string('x00181063'),
+        FrameTimeVector: dataSet.string('x00181065'),
+        TemporalPositionIndex: dataSet.intString('x00209128') || null,
+        SpacingBetweenSlices: dataSet.string('x00180088'),
+        NumberOfTemporalPositions: dataSet.intString('x00200105') || null,
+        TemporalResolution: dataSet.string('x00200110'),
 
         // Modality LUT Module
         RescaleIntercept: parseFloat(dataSet.string('x00281052')) || 0,
@@ -315,53 +323,101 @@ function createXNATDataSource(config) {
             }
 
             series.instances.forEach((instance, index) => {
-              const imageId = `xnat:${instance.url}`;
+              const baseImageId = `xnat:${instance.url}`;
 
               // Use DICOM metadata for all instances in the series
-              // (ideally we'd fetch each one, but using first instance metadata as template)
-              const baseMetadata = dicomMetadata || instance.metadata;
+              const instanceMeta = instance.metadata || {};
+              const baseMetadata = { ...(dicomMetadata || {}), ...instanceMeta };
 
-              // Calculate unique position for each slice if not available
-              const sliceSpacing = parseFloat(baseMetadata.SliceThickness) || 1;
-              const basePosition = baseMetadata.ImagePositionPatient
-                ? baseMetadata.ImagePositionPatient.split('\\').map(parseFloat)
-                : [0, 0, 0];
+              const pixelSpacingParts = (baseMetadata.PixelSpacing || '')
+                .split('\\')
+                .map(value => parseFloat(value))
+                .filter(value => !Number.isNaN(value));
+              const rowPixelSpacing = pixelSpacingParts[0] || parseFloat(baseMetadata.RowPixelSpacing) || 1;
+              const columnPixelSpacing = pixelSpacingParts[1] || parseFloat(baseMetadata.ColumnPixelSpacing) || 1;
 
-              // Calculate position for this slice (increment Z position)
-              const instancePosition = [
-                basePosition[0],
-                basePosition[1],
-                basePosition[2] + (index * sliceSpacing)
+              const orientationParts = (baseMetadata.ImageOrientationPatient || '1\\0\\0\\0\\1\\0')
+                .split('\\')
+                .map(value => parseFloat(value));
+              const rowCosines = orientationParts.slice(0, 3);
+              const columnCosines = orientationParts.slice(3, 6);
+              const normal = [
+                rowCosines[1] * columnCosines[2] - rowCosines[2] * columnCosines[1],
+                rowCosines[2] * columnCosines[0] - rowCosines[0] * columnCosines[2],
+                rowCosines[0] * columnCosines[1] - rowCosines[1] * columnCosines[0],
               ];
 
-              const instanceMetadata = {
-                ...baseMetadata,
-                // Ensure critical fields are always set - use XNAT experiment ID as StudyInstanceUID
-                StudyInstanceUID: studyMetadata.StudyInstanceUID, // Always use XNAT experiment ID
-                SeriesInstanceUID: seriesUID,
-                // Override instance-specific values
-                SOPInstanceUID: instance.metadata.SOPInstanceUID || baseMetadata.SOPInstanceUID,
-                InstanceNumber: instance.metadata.InstanceNumber || index + 1,
-                // Set unique position for each slice
-                ImagePositionPatient: instancePosition.join('\\'),
-                SliceLocation: instancePosition[2],
-                // Ensure orientation is set (default to axial if missing)
-                ImageOrientationPatient: baseMetadata.ImageOrientationPatient || '1\\0\\0\\0\\1\\0',
-              };
+              const basePosition = (baseMetadata.ImagePositionPatient || '0\\0\\0')
+                .split('\\')
+                .map(value => parseFloat(value) || 0);
 
-              const instanceWithImageId = {
-                ...instanceMetadata,
-                imageId: imageId,  // lowercase 'i' - OHIF looks for this
-              };
+              const sliceThickness = parseFloat(baseMetadata.SliceThickness) || null;
+              const spacingBetweenSlices = parseFloat(baseMetadata.SpacingBetweenSlices) || null;
+              const nominalSliceSpacing = spacingBetweenSlices || sliceThickness || 1;
 
-              instancesPerSeries[seriesUID].push(instanceWithImageId);
+              const numberOfFrames = parseInt(baseMetadata.NumberOfFrames, 10) || 1;
+              const temporalPositionIndexRaw =
+                baseMetadata.TemporalPositionIndex ?? baseMetadata.temporalPositionIndex;
+              const temporalPositionIndex =
+                temporalPositionIndexRaw !== undefined && temporalPositionIndexRaw !== null
+                  ? parseInt(temporalPositionIndexRaw, 10)
+                  : undefined;
+              const hasTemporalDimension =
+                temporalPositionIndex !== undefined && temporalPositionIndex !== null ||
+                baseMetadata.FrameTime !== undefined ||
+                baseMetadata.FrameTimeVector !== undefined;
+              const frameSpacing = hasTemporalDimension ? 0 : nominalSliceSpacing;
 
-              // Register imageId to UIDs mapping with metadataProvider
-              metadataProvider.addImageIdToUIDs(imageId, {
-                StudyInstanceUID: instanceMetadata.StudyInstanceUID,
-                SeriesInstanceUID: seriesUID,
-                SOPInstanceUID: instanceMetadata.SOPInstanceUID,
-              });
+              const baseOffset = index * nominalSliceSpacing;
+
+              for (let frameIndex = 0; frameIndex < numberOfFrames; frameIndex++) {
+                const frameImageId = numberOfFrames > 1
+                  ? `${baseImageId}?frame=${frameIndex}`
+                  : baseImageId;
+
+                const frameOffset = frameIndex * frameSpacing;
+                const totalOffset = baseOffset + frameOffset;
+
+                const framePosition = [
+                  basePosition[0] + normal[0] * totalOffset,
+                  basePosition[1] + normal[1] * totalOffset,
+                  basePosition[2] + normal[2] * totalOffset,
+                ];
+
+                const instanceMetadata = {
+                  ...baseMetadata,
+                  StudyInstanceUID: studyMetadata.StudyInstanceUID,
+                  SeriesInstanceUID: seriesUID,
+                  SOPInstanceUID: instanceMeta.SOPInstanceUID || baseMetadata.SOPInstanceUID,
+                  SOPClassUID: instanceMeta.SOPClassUID || baseMetadata.SOPClassUID,
+                  InstanceNumber: instanceMeta.InstanceNumber || baseMetadata.InstanceNumber || index + 1,
+                  InStackPositionNumber: index * numberOfFrames + frameIndex + 1,
+                  ImagePositionPatient: framePosition.join('\\'),
+                  SliceLocation: framePosition[2],
+                  ImageOrientationPatient: baseMetadata.ImageOrientationPatient || '1\\0\\0\\0\\1\\0',
+                  NumberOfFrames: numberOfFrames,
+                  FrameNumber: frameIndex + 1,
+                  TemporalPositionIndex: temporalPositionIndex,
+                  FrameTime: baseMetadata.FrameTime,
+                  FrameTimeVector: baseMetadata.FrameTimeVector,
+                  RowPixelSpacing: rowPixelSpacing,
+                  ColumnPixelSpacing: columnPixelSpacing,
+                  PixelSpacing: `${rowPixelSpacing}\\${columnPixelSpacing}`,
+                };
+
+                const instanceWithImageId = {
+                  ...instanceMetadata,
+                  imageId: frameImageId,
+                };
+
+                instancesPerSeries[seriesUID].push(instanceWithImageId);
+
+                metadataProvider.addImageIdToUIDs(frameImageId, {
+                  StudyInstanceUID: instanceMetadata.StudyInstanceUID,
+                  SeriesInstanceUID: seriesUID,
+                  SOPInstanceUID: instanceMetadata.SOPInstanceUID,
+                });
+              }
             });
           }
 
