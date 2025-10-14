@@ -421,6 +421,18 @@ function createXNATDataSource(config) {
             });
           }
 
+          // Sort instances for each series
+          // For 4D data: sort by InstanceNumber first, then FrameNumber
+          // This ensures correct spatial ordering, with frames within each instance in sequence
+          Object.keys(instancesPerSeries).forEach(seriesUID => {
+            instancesPerSeries[seriesUID].sort((a, b) => {
+              const instanceDiff = (a.InstanceNumber || 0) - (b.InstanceNumber || 0);
+              if (instanceDiff !== 0) return instanceDiff;
+              // If same instance, sort by frame number
+              return (a.FrameNumber || 0) - (b.FrameNumber || 0);
+            });
+          });
+
           // Add to DicomMetadataStore (OHIF expects this)
           DicomMetadataStore.addSeriesMetadata(Object.values(seriesSummaryMetadata), false);
           Object.keys(instancesPerSeries).forEach(seriesInstanceUID => {

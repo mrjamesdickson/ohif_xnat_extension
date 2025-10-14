@@ -11,6 +11,11 @@ let config = null;
 const metadataCache = new Map();
 let metadataProviderRegistered = false;
 
+// DICOM file cache for improved performance
+const dicomFileCache = new Map();
+const CACHE_SIZE_LIMIT = 512 * 1024 * 1024; // 512MB cache limit
+let currentCacheSize = 0;
+
 const MetadataModuleKeys = {
   IMAGE_PLANE: 'imagePlaneModule',
   IMAGE_PIXEL: 'imagePixelModule',
@@ -178,6 +183,22 @@ function parseImageId(imageId) {
 }
 
 /**
+ * Evict old entries from DICOM file cache when limit is reached
+ */
+function evictFromCache() {
+  if (dicomFileCache.size === 0) return;
+
+  // Remove oldest entry (first in Map)
+  const firstKey = dicomFileCache.keys().next().value;
+  const cachedData = dicomFileCache.get(firstKey);
+  if (cachedData) {
+    currentCacheSize -= cachedData.byteLength;
+    dicomFileCache.delete(firstKey);
+    console.log('🗑️ Evicted from cache:', firstKey, 'New cache size:', Math.round(currentCacheSize / 1024 / 1024), 'MB');
+  }
+}
+
+/**
  * Configure the image loader with XNAT credentials
  */
 export function configure(xnatConfig) {
@@ -201,31 +222,56 @@ export function loadImage(imageId) {
 
   const promise = (async () => {
     try {
-    // Setup authentication headers
-    const headers = {
-      'Content-Type': 'application/dicom',
-    };
-
-    if (config) {
-      if (config.token) {
-        headers['Authorization'] = `Bearer ${config.token}`;
-        console.log('🔵 Using Bearer token authentication');
-      } else if (config.username && config.password) {
-        const auth = btoa(`${config.username}:${config.password}`);
-        headers['Authorization'] = `Basic ${auth}`;
-        console.log('🔵 Using Basic authentication');
-      }
+    // Check if DICOM file is already cached (cache by URL, not imageId with frame)
+    let arrayBuffer;
+    if (dicomFileCache.has(url)) {
+      console.log('✅ DICOM file found in cache:', url);
+      arrayBuffer = dicomFileCache.get(url).arrayBuffer;
     } else {
-      console.warn('⚠️ No config available for authentication!');
+      // Setup authentication headers
+      const headers = {
+        'Content-Type': 'application/dicom',
+      };
+
+      if (config) {
+        if (config.token) {
+          headers['Authorization'] = `Bearer ${config.token}`;
+          console.log('🔵 Using Bearer token authentication');
+        } else if (config.username && config.password) {
+          const auth = btoa(`${config.username}:${config.password}`);
+          headers['Authorization'] = `Basic ${auth}`;
+          console.log('🔵 Using Basic authentication');
+        }
+      } else {
+        console.warn('⚠️ No config available for authentication!');
+      }
+
+      // Fetch the DICOM file
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        headers,
+      });
+
+      arrayBuffer = response.data;
+
+      // Add to cache
+      const byteLength = arrayBuffer.byteLength;
+
+      // Evict old entries if cache is full
+      while (currentCacheSize + byteLength > CACHE_SIZE_LIMIT && dicomFileCache.size > 0) {
+        evictFromCache();
+      }
+
+      // Cache the DICOM file
+      dicomFileCache.set(url, {
+        arrayBuffer,
+        byteLength,
+        timestamp: Date.now(),
+      });
+      currentCacheSize += byteLength;
+
+      console.log('💾 Cached DICOM file:', url, 'Cache size:', Math.round(currentCacheSize / 1024 / 1024), 'MB', 'Entries:', dicomFileCache.size);
     }
-
-    // Fetch the DICOM file
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      headers,
-    });
-
-    const arrayBuffer = response.data;
 
     // Parse DICOM data
     const byteArray = new Uint8Array(arrayBuffer);
@@ -520,6 +566,27 @@ export function loadImage(imageId) {
 }
 
 /**
+ * Clear the DICOM file cache
+ */
+export function clearCache() {
+  dicomFileCache.clear();
+  currentCacheSize = 0;
+  console.log('🗑️ DICOM file cache cleared');
+}
+
+/**
+ * Get cache statistics
+ */
+export function getCacheStats() {
+  return {
+    entries: dicomFileCache.size,
+    sizeBytes: currentCacheSize,
+    sizeMB: Math.round(currentCacheSize / 1024 / 1024 * 100) / 100,
+    limitMB: Math.round(CACHE_SIZE_LIMIT / 1024 / 1024),
+  };
+}
+
+/**
  * Register the XNAT image loader with Cornerstone
  */
 export function register(cornerstone) {
@@ -530,4 +597,6 @@ export default {
   configure,
   loadImage,
   register,
+  clearCache,
+  getCacheStats,
 };
