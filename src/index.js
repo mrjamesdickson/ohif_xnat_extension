@@ -28,6 +28,22 @@ function preRegistration({ servicesManager, configuration = {} }) {
   } else {
     console.warn('⚠️ No XNAT configuration provided to preRegistration');
   }
+
+  // Expose cache utilities to window for debugging
+  if (typeof window !== 'undefined') {
+    window.xnatImageCache = {
+      getStats: () => {
+        const stats = XNATImageLoader.getCacheStats();
+        console.log('📊 XNAT Image Cache Stats:', stats);
+        return stats;
+      },
+      clear: () => {
+        XNATImageLoader.clearCache();
+        console.log('🗑️ XNAT Image Cache cleared');
+      },
+    };
+    console.log('🟢 Cache utilities available: window.xnatImageCache.getStats(), window.xnatImageCache.clear()');
+  }
 }
 
 /**

@@ -271,6 +271,12 @@ class XNATClient {
             const actualSeriesUID = getTagValue('(0020,000E)');
             const actualStudyUID = getTagValue('(0020,000D)');
 
+            const numberOfFrames = parseInt(getTagValue('(0028,0008)')) || 1;
+            const frameIncrementPointer = getTagValue('(0028,0009)');
+            const frameTime = parseFloat(getTagValue('(0018,1063)')) || null;
+            const frameTimeVector = getTagValue('(0018,1065)');
+            const temporalPositionIndex = parseInt(getTagValue('(0020,9128)')) || null;
+
             // Skip scan if missing SeriesInstanceUID
             if (!actualSeriesUID) {
               console.warn(`Skipping scan ${scan.ID} in experiment ${experimentId}: Missing SeriesInstanceUID (0020,000E)`);
@@ -349,10 +355,47 @@ class XNATClient {
             spacingArray = pixelSpacing.split('\\').map(parseFloat);
           }
 
-          // Get all instances for this series - use full URL with baseUrl
-          const instances = files.map((file, index) => {
+          // First, create file objects with sorting indices
+          const filesWithMetadata = files.map((file, index) => {
             const url = `${this.baseUrl}${file.URI}`;
-            if (index === 0) {
+
+            // Extract instance number from filename
+            // Examples: "1-001.dcm", "IM0001", "slice_001.dcm", etc.
+            let instanceNum = index; // Default to array order
+
+            if (file.Name) {
+              // Try to extract numeric index from filename
+              const match = file.Name.match(/[-_]?(\d+)(?:\.dcm)?$/i);
+              if (match) {
+                instanceNum = parseInt(match[1]);
+              }
+            }
+
+            // Note: We can't get per-file FrameNumber or InstanceNumber from DICOM metadata
+            // without fetching each file individually. The dicomdump above only queries one file.
+            // So we rely on filename ordering or the order XNAT returns files.
+
+            return {
+              file,
+              url,
+              originalIndex: index,
+              instanceNumber: instanceNum,
+              // FrameNumber would need to be extracted per-file, currently not available
+            };
+          });
+
+          // Sort files by instance number to ensure correct anatomical ordering
+          // For 4D datasets with multi-frame files, frames within each file are handled
+          // later in XNATDataSource.js when processing NumberOfFrames
+          filesWithMetadata.sort((a, b) => a.instanceNumber - b.instanceNumber);
+
+          console.log(`Scan ${scan.ID}: sorted ${filesWithMetadata.length} files by instance number (first: ${filesWithMetadata[0]?.instanceNumber}, last: ${filesWithMetadata[filesWithMetadata.length-1]?.instanceNumber})`);
+
+          // Now create instances in the correct order
+          const instances = filesWithMetadata.map((fileData, sortedIndex) => {
+            const { url, instanceNumber, actualSOPInstanceUID } = fileData;
+
+            if (sortedIndex === 0) {
               console.log(`Sample DICOM file URL for scan ${scan.ID}:`, url);
             }
 
@@ -369,7 +412,7 @@ class XNATClient {
               SOPClassUID = '1.2.840.10008.5.1.4.1.1.2'; // Default to CT
             }
 
-            // Calculate ImagePositionPatient for this slice
+            // Calculate ImagePositionPatient for this slice using sortedIndex
             // Position changes along the normal vector (cross product of orientation vectors)
             let instancePosition = positionArray;
             if (positionArray && orientationArray && orientationArray.length === 6) {
@@ -382,14 +425,16 @@ class XNATClient {
                 rowCosines[0] * colCosines[1] - rowCosines[1] * colCosines[0]
               ];
 
-              // Calculate position for this slice
-              const sliceOffset = index * sliceThickness;
+              // Calculate position for this slice based on sorted index
+              const sliceOffset = sortedIndex * sliceThickness;
               instancePosition = [
                 positionArray[0] + normal[0] * sliceOffset,
                 positionArray[1] + normal[1] * sliceOffset,
                 positionArray[2] + normal[2] * sliceOffset
               ];
             }
+
+            const frameOfReferenceUID = getTagValue('(0020,0052)');
 
             const metadata = {
               StudyInstanceUID: scanStudyInstanceUID,
@@ -398,13 +443,18 @@ class XNATClient {
               SeriesDescription: seriesDescription,
               SeriesDate: scan.date || '',
               SeriesTime: '',
-              InstanceNumber: index + 1,
-              SOPInstanceUID: `${seriesInstanceUID}.${index + 1}`,
+              InstanceNumber: instanceNumber,
+              SOPInstanceUID: actualSOPInstanceUID || `${seriesInstanceUID}.${sortedIndex + 1}`,
               SOPClassUID: SOPClassUID,
               Modality: modality,
-              NumberOfFrames: 1,
+              NumberOfFrames: numberOfFrames,
+              FrameIncrementPointer: frameIncrementPointer,
+              FrameTime: frameTime,
+              FrameTimeVector: frameTimeVector,
+              TemporalPositionIndex: temporalPositionIndex,
               Rows: rows,
               Columns: columns,
+              FrameOfReferenceUID: frameOfReferenceUID,
             };
 
             // Add geometric metadata if available from dicomdump
@@ -424,7 +474,7 @@ class XNATClient {
               metadata.SliceThickness = sliceThickness;
               metadata.SpacingBetweenSlices = sliceThickness;
             }
-            metadata.SliceLocation = sliceLocation + (index * sliceThickness);
+            metadata.SliceLocation = sliceLocation + (sortedIndex * sliceThickness);
 
             return {
               url,
