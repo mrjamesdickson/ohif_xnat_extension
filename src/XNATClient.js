@@ -257,6 +257,14 @@ class XNATClient {
           let columns;
           let sliceLocation;
 
+          // Multi-frame and temporal metadata variables
+          let numberOfFrames = 1;
+          let frameIncrementPointer = null;
+          let frameTime = null;
+          let frameTimeVector = null;
+          let temporalPositionIndex = null;
+          let frameOfReferenceUID = null;
+
           if (dicomMetadata) {
             // Extract DICOM tags from dicomdump format
             // dicomdump returns ResultSet.Result array with tag1, value, desc
@@ -271,11 +279,11 @@ class XNATClient {
             const actualSeriesUID = getTagValue('(0020,000E)');
             const actualStudyUID = getTagValue('(0020,000D)');
 
-            const numberOfFrames = parseInt(getTagValue('(0028,0008)')) || 1;
-            const frameIncrementPointer = getTagValue('(0028,0009)');
-            const frameTime = parseFloat(getTagValue('(0018,1063)')) || null;
-            const frameTimeVector = getTagValue('(0018,1065)');
-            const temporalPositionIndex = parseInt(getTagValue('(0020,9128)')) || null;
+            numberOfFrames = parseInt(getTagValue('(0028,0008)')) || 1;
+            frameIncrementPointer = getTagValue('(0028,0009)');
+            frameTime = parseFloat(getTagValue('(0018,1063)')) || null;
+            frameTimeVector = getTagValue('(0018,1065)');
+            temporalPositionIndex = parseInt(getTagValue('(0020,9128)')) || null;
 
             // Skip scan if missing SeriesInstanceUID
             if (!actualSeriesUID) {
@@ -303,6 +311,7 @@ class XNATClient {
             rows = parseInt(getTagValue('(0028,0010)'));
             columns = parseInt(getTagValue('(0028,0011)'));
             sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0;
+            frameOfReferenceUID = getTagValue('(0020,0052)');
 
             // Warn about missing geometric fields but don't skip the scan
             let hasWarnings = false;
@@ -433,8 +442,6 @@ class XNATClient {
                 positionArray[2] + normal[2] * sliceOffset
               ];
             }
-
-            const frameOfReferenceUID = getTagValue('(0020,0052)');
 
             const metadata = {
               StudyInstanceUID: scanStudyInstanceUID,
