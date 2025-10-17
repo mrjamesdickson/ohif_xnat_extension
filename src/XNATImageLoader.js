@@ -1,6 +1,15 @@
 import dicomParser from 'dicom-parser';
 import axios from 'axios';
 import { metaData as cornerstoneMetaData } from '@cornerstonejs/core';
+import {
+  parseNumberArray,
+  parseFloatValue,
+  parseFloatValues,
+  getSequenceItem,
+  getFunctionalGroupValue,
+  parseTemporalPosition,
+  parseImageId,
+} from './XNATImageLoader.utils.js';
 
 /**
  * Image loader for XNAT
@@ -8,6 +17,7 @@ import { metaData as cornerstoneMetaData } from '@cornerstonejs/core';
  */
 
 let config = null;
+
 const metadataCache = new Map();
 let metadataProviderRegistered = false;
 
@@ -71,116 +81,6 @@ function cacheMetadata(imageId, metadata) {
   metadataCache.set(imageId, metadata);
 }
 
-function parseNumberArray(value) {
-  if (!value || typeof value !== 'string') {
-    return null;
-  }
-
-  const parts = value.split('\\').map(part => parseFloat(part)).filter(num => !Number.isNaN(num));
-  return parts.length ? parts : null;
-}
-
-function parseFloatValue(value) {
-  if (value === undefined || value === null || value === '') {
-    return null;
-  }
-
-  const parsed = parseFloat(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function parseFloatValues(value) {
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  if (Array.isArray(value)) {
-    const numbers = value.map(item => parseFloat(item)).filter(num => !Number.isNaN(num));
-    return numbers.length ? numbers : null;
-  }
-
-  return parseNumberArray(value);
-}
-
-function getSequenceItem(dataSet, tag) {
-  const sequenceElement = dataSet?.elements?.[tag];
-  if (!sequenceElement || !sequenceElement.items || !sequenceElement.items.length) {
-    return null;
-  }
-
-  return sequenceElement.items[0]?.dataSet || null;
-}
-
-function getFunctionalGroupValue({
-  fallbackDataSet,
-  sharedDataSet,
-  perFrameDataSet,
-  sequenceTag,
-  valueTag,
-  fallbackTag,
-}) {
-  const valueFromPerFrame = getSequenceItem(perFrameDataSet, sequenceTag)?.string?.(valueTag);
-  if (valueFromPerFrame) {
-    return valueFromPerFrame;
-  }
-
-  const valueFromShared = getSequenceItem(sharedDataSet, sequenceTag)?.string?.(valueTag);
-  if (valueFromShared) {
-    return valueFromShared;
-  }
-
-  if (fallbackTag && fallbackDataSet) {
-    return fallbackDataSet.string(fallbackTag);
-  }
-
-  return null;
-}
-
-function parseTemporalPosition(dataSet, perFrameFunctionalGroups, frameIndex) {
-  const perFrameDataSet = perFrameFunctionalGroups?.items?.[frameIndex]?.dataSet;
-  const frameContentItem = getSequenceItem(perFrameDataSet, 'x00209111'); // FrameContentSequence
-  const temporalPosition = frameContentItem ? frameContentItem.intString('x00209128') : null;
-  const frameTime = dataSet.floatString('x00181063') || null; // FrameTime
-
-  return {
-    temporalPositionIndex: temporalPosition,
-    frameTime,
-  };
-}
-
-function parseImageId(imageId) {
-  const raw = imageId.replace(/^xnat:/, '');
-
-  try {
-    const url = new URL(raw);
-    const frameParam = url.searchParams.get('frame');
-    const frame = frameParam !== null ? parseInt(frameParam, 10) : 0;
-    url.searchParams.delete('frame');
-    return {
-      url: url.toString(),
-      frameIndex: Number.isInteger(frame) && frame >= 0 ? frame : 0,
-    };
-  } catch (error) {
-    // Fallback: treat as simple string without additional params
-    const [base, query] = raw.split('?');
-    let frameIndex = 0;
-    if (query) {
-      const params = new URLSearchParams(query);
-      const frameParam = params.get('frame');
-      if (frameParam) {
-        const parsed = parseInt(frameParam, 10);
-        if (Number.isInteger(parsed) && parsed >= 0) {
-          frameIndex = parsed;
-        }
-      }
-    }
-
-    return {
-      url: base,
-      frameIndex,
-    };
-  }
-}
 
 /**
  * Evict old entries from DICOM file cache when limit is reached
@@ -212,7 +112,6 @@ export function configure(xnatConfig) {
  * @returns {Object} Image load object with promise property
  */
 export function loadImage(imageId) {
-  console.error('🔵🔵🔵 XNATImageLoader.loadImage CALLED!!! imageId:', imageId);
   console.log('🔵 XNATImageLoader.loadImage called with imageId:', imageId);
   ensureMetadataProviderRegistered();
 
@@ -486,6 +385,7 @@ export function loadImage(imageId) {
         rescaleIntercept,
         rescaleSlope,
         rescaleType: dataSet.string('x00281054') || undefined,
+        scaled: false,
       },
       calibrationModule: {},
       multiFrameModule: {
@@ -497,6 +397,17 @@ export function loadImage(imageId) {
     };
 
     cacheMetadata(imageId, metadataForImage);
+    console.log('🧭 Image plane metadata:', {
+      imageId,
+      seriesInstanceUID: metadataForImage.generalSeriesModule.seriesInstanceUID,
+      instanceNumber: metadataForImage.generalImageModule.instanceNumber,
+      imagePositionPatient: metadataForImage.imagePlaneModule.imagePositionPatient,
+      imageOrientationPatient: metadataForImage.imagePlaneModule.imageOrientationPatient,
+      sliceLocation: metadataForImage.imagePlaneModule.sliceLocation,
+      temporalPositionIndex: metadataForImage.generalImageModule.temporalPositionIndex,
+      frameNumber: boundedFrameIndex + 1,
+      numberOfFrames,
+    });
 
     const image = {
       imageId,

@@ -1,20 +1,164 @@
+import React from 'react';
 import XNATClient from './XNATClient.js';
+import XNATImageLoader from './XNATImageLoader.js';
 import { DicomMetadataStore, classes as OHIFClasses } from '@ohif/core';
 import dicomParser from 'dicom-parser';
 import axios from 'axios';
+
+const STORAGE_KEY_FALLBACK = 'ohif.xnat.selectedProject';
+
+function getPersistedProject(storageKey) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return null;
+    }
+    return window.localStorage.getItem(storageKey) || null;
+  } catch (error) {
+    console.warn('⚠️ Unable to read persisted XNAT project selection:', error);
+    return null;
+  }
+}
+
+function persistProject(storageKey, projectId) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+
+    if (projectId) {
+      window.localStorage.setItem(storageKey, projectId);
+    } else {
+      window.localStorage.removeItem(storageKey);
+    }
+  } catch (error) {
+    console.warn('⚠️ Unable to persist XNAT project selection:', error);
+  }
+}
+
+function ProjectSelectionDialog({ projects, defaultValue, onSubmit, onCancel, hide }) {
+  const [selectedProject, setSelectedProject] = React.useState(
+    defaultValue || projects?.[0]?.ID || ''
+  );
+
+  const sortedProjects = React.useMemo(() => {
+    if (!Array.isArray(projects)) {
+      return [];
+    }
+    return [...projects].sort((a, b) => {
+      const nameA = (a.name || a.ID || '').toLowerCase();
+      const nameB = (b.name || b.ID || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+  }, [projects]);
+
+  const labelElement = React.createElement(
+    'label',
+    {
+      htmlFor: 'xnat-project-select',
+      className: 'block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1',
+    },
+    'Select a project'
+  );
+
+  const selectElement = React.createElement(
+    'select',
+    {
+      id: 'xnat-project-select',
+      className: 'ohif-input w-full',
+      value: selectedProject,
+      onChange: event => setSelectedProject(event.target.value),
+    },
+    sortedProjects.map(project =>
+      React.createElement(
+        'option',
+        {
+          key: project.ID,
+          value: project.ID,
+        },
+        project.name || project.ID
+      )
+    )
+  );
+
+  const cancelButton = React.createElement(
+    'button',
+    {
+      type: 'button',
+      className: 'ohif-button ohif-button--secondary',
+      onClick: () => {
+        onCancel();
+        hide();
+      },
+    },
+    'Cancel'
+  );
+
+  const continueButton = React.createElement(
+    'button',
+    {
+      type: 'button',
+      className: 'ohif-button ohif-button--primary',
+      disabled: !selectedProject,
+      onClick: () => {
+        onSubmit(selectedProject);
+        hide();
+      },
+    },
+    'Continue'
+  );
+
+  const buttonRow = React.createElement(
+    'div',
+    { className: 'flex justify-end gap-2' },
+    cancelButton,
+    continueButton
+  );
+
+  const selectRow = React.createElement(
+    'div',
+    null,
+    labelElement,
+    selectElement
+  );
+
+  return React.createElement(
+    'div',
+    { className: 'flex flex-col gap-4 p-4 text-left' },
+    selectRow,
+    buttonRow
+  );
+}
 
 /**
  * XNAT Data Source for OHIF Viewer
  * Creates a data source that retrieves images from XNAT
  */
-function createXNATDataSource(config) {
+function createXNATDataSource(configuration = {}, servicesManager) {
+  const config = configuration || {};
   console.log('createXNATDataSource called with config:', config);
   const client = new XNATClient(config);
-  let currentProjectFilter = null;
+  const studySearchLimit = Number.isFinite(Number(config.studySearchLimit))
+    ? Number(config.studySearchLimit)
+    : Number.isFinite(Number(config.studyListLimit))
+    ? Number(config.studyListLimit)
+    : 100;
+  const shouldPromptForProject = config.promptForProject !== false;
+  const shouldRememberSelection = config.rememberProjectSelection !== false;
+  const projectStorageKey = config.projectPreferenceKey || STORAGE_KEY_FALLBACK;
+
+  const services = servicesManager?.services || {};
+  const uiDialogService = services.uiDialogService;
+
+  const initialStoredProject =
+    config.defaultProject ||
+    (shouldRememberSelection ? getPersistedProject(projectStorageKey) : null);
+
+  let currentProjectFilter = initialStoredProject || null;
   const metadataProvider = OHIFClasses.MetadataProvider;
 
   // Configure the XNAT image loader with credentials
-  const XNATImageLoader = require('./XNATImageLoader.js').default;
+  // Note: XNATImageLoader is imported at module level, but we configure it here
+  // because it needs runtime configuration from the data source
   XNATImageLoader.configure({
     xnatUrl: config.xnatUrl,
     username: config.username,
@@ -134,6 +278,83 @@ function createXNATDataSource(config) {
   /**
    * Initialize the data source
    */
+  const isDialogServiceReady = service => {
+    if (!service || typeof service.show !== 'function') {
+      return false;
+    }
+    try {
+      const fnString = service.show.toString();
+      return !fnString.includes('NOT IMPLEMENTED');
+    } catch (error) {
+      return true;
+    }
+  };
+
+  const waitForDialogService = async service => {
+    if (isDialogServiceReady(service)) {
+      return true;
+    }
+
+    return new Promise(resolve => {
+      let attempts = 0;
+      const maxAttempts = 40;
+      const interval = setInterval(() => {
+        attempts += 1;
+        if (isDialogServiceReady(service) || attempts >= maxAttempts) {
+          clearInterval(interval);
+          resolve(isDialogServiceReady(service));
+        }
+      }, 50);
+    });
+  };
+
+  const promptForProjectSelection = async projects => {
+    if (
+      !shouldPromptForProject ||
+      !uiDialogService ||
+      !Array.isArray(projects) ||
+      projects.length === 0
+    ) {
+      return null;
+    }
+
+    const ready = await waitForDialogService(uiDialogService);
+
+    if (!ready) {
+      console.warn('⚠️ uiDialogService not ready; falling back to window prompt for project selection.');
+      const defaultValue =
+        currentProjectFilter || config.defaultProject || projects?.[0]?.ID || '';
+      // eslint-disable-next-line no-alert
+      const manualSelection = window.prompt(
+        'Select XNAT Project by ID:',
+        defaultValue || ''
+      );
+      return manualSelection || null;
+    }
+
+    return new Promise(resolve => {
+      const dialogId = 'xnat-project-selection';
+
+      uiDialogService.show({
+        id: dialogId,
+        title: 'Select XNAT Project',
+        shouldCloseOnEsc: true,
+        content: ProjectSelectionDialog,
+        contentProps: {
+          projects,
+          defaultValue:
+            currentProjectFilter || config.defaultProject || projects?.[0]?.ID || '',
+          onSubmit: projectId => {
+            resolve(projectId);
+          },
+          onCancel: () => {
+            resolve(null);
+          },
+        },
+      });
+    });
+  };
+
   const initialize = async () => {
     try {
       const projects = await client.getProjects();
@@ -143,7 +364,7 @@ function createXNATDataSource(config) {
 
       // Expose project filtering globally for easy access
       window.xnatProjects = projects;
-      window.xnatSetProject = (projectId) => {
+      window.xnatSetProject = projectId => {
         setProjectFilter(projectId);
         console.log(`✅ Filter set to project: ${projectId || 'All Projects'}`);
         console.log('🔄 Refresh the study list to see filtered results');
@@ -151,6 +372,21 @@ function createXNATDataSource(config) {
       window.xnatListProjects = () => {
         console.table(projects.map(p => ({ ID: p.ID, Name: p.name || p.ID })));
       };
+
+      if (!currentProjectFilter) {
+        if (projects.length === 1) {
+          setProjectFilter(projects[0].ID);
+        } else {
+          const selectedProject = await promptForProjectSelection(projects);
+          if (selectedProject) {
+            setProjectFilter(selectedProject);
+          }
+        }
+      }
+
+      if (currentProjectFilter) {
+        console.log(`🎯 Default project filter applied: ${currentProjectFilter}`);
+      }
     } catch (error) {
       console.error('Failed to connect to XNAT:', error);
       throw new Error('Unable to connect to XNAT instance');
@@ -196,7 +432,7 @@ function createXNATDataSource(config) {
             params.AccessionNumber = currentProjectFilter;
           }
 
-          const studies = await client.searchForStudies(params);
+          const studies = await client.searchForStudies(params, studySearchLimit);
           return studies;
         } catch (error) {
           console.error('Error querying studies:', error);
@@ -220,10 +456,19 @@ function createXNATDataSource(config) {
           }
 
           // Resolve DICOM UID to XNAT experiment ID and project ID
-          const { experimentId: resolvedExperimentId, projectId } = await client.resolveStudyInstanceUID(experimentId);
+          // Pass current project filter to constrain the lookup to that project
+          const { experimentId: resolvedExperimentId, projectId: resolvedProjectId } = await client.resolveStudyInstanceUID(
+            experimentId,
+            currentProjectFilter
+          );
+
+          // Use current project filter if set, otherwise use resolved project
+          // This handles cases where experiments are shared across projects
+          const projectToUse = currentProjectFilter || resolvedProjectId;
+          console.log(`Using project: ${projectToUse} (filter: ${currentProjectFilter}, resolved: ${resolvedProjectId})`);
 
           // Get the study metadata which includes series, passing the original StudyInstanceUID and project ID
-          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId, projectId);
+          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId, projectToUse);
           console.log('Study metadata for series search:', studyMetadata);
 
           // Format series for OHIF WorkList
@@ -253,6 +498,9 @@ function createXNATDataSource(config) {
    */
   const setProjectFilter = (projectId) => {
     currentProjectFilter = projectId;
+    if (shouldRememberSelection) {
+      persistProject(projectStorageKey, projectId);
+    }
     console.log('Project filter set to:', projectId || 'All Projects');
   };
 
@@ -277,6 +525,65 @@ function createXNATDataSource(config) {
 
         const formatSeriesMetadata = async (studyMetadata) => {
           console.log('📊 Raw study metadata:', studyMetadata);
+
+          const ensureModalityLutModule = (metadata) => {
+            if (!metadata) {
+              return;
+            }
+
+            const module = metadata.modalityLutModule || {};
+            const rawSlope = module.rescaleSlope ?? metadata.RescaleSlope ?? metadata.rescaleSlope;
+            const rawIntercept = module.rescaleIntercept ?? metadata.RescaleIntercept ?? metadata.rescaleIntercept;
+            const rawType = module.rescaleType ?? metadata.RescaleType ?? metadata.rescaleType;
+
+            const slope = parseFloat(rawSlope);
+            const intercept = parseFloat(rawIntercept);
+
+            module.rescaleSlope = Number.isFinite(slope) ? slope : 1;
+            module.rescaleIntercept = Number.isFinite(intercept) ? intercept : 0;
+            module.rescaleType = rawType || module.rescaleType;
+            if (typeof module.scaled === 'undefined') {
+              module.scaled = false;
+            }
+
+            metadata.modalityLutModule = module;
+          };
+
+          const parseNumericArray = (value) => {
+            if (Array.isArray(value)) {
+              return value
+                .map(item => parseFloat(item))
+                .filter(item => !Number.isNaN(item));
+            }
+            if (typeof value === 'number') {
+              return Number.isNaN(value) ? [] : [value];
+            }
+            if (typeof value === 'string') {
+              return value
+                .split('\\')
+                .map(component => parseFloat(component))
+                .filter(component => !Number.isNaN(component));
+            }
+            return [];
+          };
+
+          const getOrientationArray = (metadata) => {
+            const primary = metadata.ImageOrientationPatientNumeric ?? metadata.ImageOrientationPatient;
+            const arr = parseNumericArray(primary);
+            return arr.length === 6 ? arr : [];
+          };
+
+          const getPositionArray = (metadata) => {
+            const primary = metadata.ImagePositionPatientNumeric ?? metadata.ImagePositionPatient;
+            const arr = parseNumericArray(primary);
+            return arr.length === 3 ? arr : [];
+          };
+
+          const getPixelSpacingArray = (metadata) => {
+            const primary = metadata.PixelSpacingNumeric ?? metadata.PixelSpacing;
+            const arr = parseNumericArray(primary);
+            return arr.length >= 2 ? arr.slice(0, 2) : [];
+          };
 
           // Build series summary and instances per series (matching DicomWeb format)
           const seriesSummaryMetadata = {};
@@ -303,6 +610,8 @@ function createXNATDataSource(config) {
               const baseMetadata = series.instances[0]?.metadata || {};
               const metadata = dicomMetadata || baseMetadata;
 
+              ensureModalityLutModule(metadata);
+
               seriesSummaryMetadata[seriesUID] = {
                 StudyInstanceUID: metadata.StudyInstanceUID || studyMetadata.StudyInstanceUID,
                 StudyDescription: metadata.StudyDescription || studyMetadata.StudyDescription,
@@ -314,6 +623,7 @@ function createXNATDataSource(config) {
                 Modality: metadata.Modality || series.Modality,
                 SOPClassUID: metadata.SOPClassUID || baseMetadata.SOPClassUID,
                 ProtocolName: metadata.ProtocolName || '',
+                modalityLutModule: metadata.modalityLutModule,
               };
             }
 
@@ -329,27 +639,37 @@ function createXNATDataSource(config) {
               const instanceMeta = instance.metadata || {};
               const baseMetadata = { ...(dicomMetadata || {}), ...instanceMeta };
 
-              const pixelSpacingParts = (baseMetadata.PixelSpacing || '')
-                .split('\\')
-                .map(value => parseFloat(value))
-                .filter(value => !Number.isNaN(value));
-              const rowPixelSpacing = pixelSpacingParts[0] || parseFloat(baseMetadata.RowPixelSpacing) || 1;
-              const columnPixelSpacing = pixelSpacingParts[1] || parseFloat(baseMetadata.ColumnPixelSpacing) || 1;
+              ensureModalityLutModule(baseMetadata);
 
-              const orientationParts = (baseMetadata.ImageOrientationPatient || '1\\0\\0\\0\\1\\0')
-                .split('\\')
-                .map(value => parseFloat(value));
-              const rowCosines = orientationParts.slice(0, 3);
-              const columnCosines = orientationParts.slice(3, 6);
+              let pixelSpacingArray = getPixelSpacingArray(baseMetadata);
+              if (pixelSpacingArray.length < 2) {
+                pixelSpacingArray = [
+                  parseFloat(baseMetadata.RowPixelSpacing) || 1,
+                  parseFloat(baseMetadata.ColumnPixelSpacing) || 1,
+                ];
+              }
+              if (pixelSpacingArray.length < 2) {
+                pixelSpacingArray = [1, 1];
+              }
+              const rowPixelSpacing = pixelSpacingArray[0];
+              const columnPixelSpacing = pixelSpacingArray[1];
+
+              let orientationArray = getOrientationArray(baseMetadata);
+              if (orientationArray.length !== 6) {
+                orientationArray = [1, 0, 0, 0, 1, 0];
+              }
+              const rowCosines = orientationArray.slice(0, 3);
+              const columnCosines = orientationArray.slice(3, 6);
               const normal = [
                 rowCosines[1] * columnCosines[2] - rowCosines[2] * columnCosines[1],
                 rowCosines[2] * columnCosines[0] - rowCosines[0] * columnCosines[2],
                 rowCosines[0] * columnCosines[1] - rowCosines[1] * columnCosines[0],
               ];
 
-              const basePosition = (baseMetadata.ImagePositionPatient || '0\\0\\0')
-                .split('\\')
-                .map(value => parseFloat(value) || 0);
+              let basePositionArray = getPositionArray(baseMetadata);
+              if (basePositionArray.length !== 3) {
+                basePositionArray = [0, 0, 0];
+              }
 
               const sliceThickness = parseFloat(baseMetadata.SliceThickness) || null;
               const spacingBetweenSlices = parseFloat(baseMetadata.SpacingBetweenSlices) || null;
@@ -379,10 +699,11 @@ function createXNATDataSource(config) {
                 const totalOffset = baseOffset + frameOffset;
 
                 const framePosition = [
-                  basePosition[0] + normal[0] * totalOffset,
-                  basePosition[1] + normal[1] * totalOffset,
-                  basePosition[2] + normal[2] * totalOffset,
+                  basePositionArray[0] + normal[0] * totalOffset,
+                  basePositionArray[1] + normal[1] * totalOffset,
+                  basePositionArray[2] + normal[2] * totalOffset,
                 ];
+                const framePositionString = framePosition.join('\\');
 
                 const instanceMetadata = {
                   ...baseMetadata,
@@ -392,23 +713,45 @@ function createXNATDataSource(config) {
                   SOPClassUID: instanceMeta.SOPClassUID || baseMetadata.SOPClassUID,
                   InstanceNumber: instanceMeta.InstanceNumber || baseMetadata.InstanceNumber || index + 1,
                   InStackPositionNumber: index * numberOfFrames + frameIndex + 1,
-                  ImagePositionPatient: framePosition.join('\\'),
+                  ImagePositionPatient: framePositionString,
+                  ImagePositionPatientNumeric: framePosition,
                   SliceLocation: framePosition[2],
-                  ImageOrientationPatient: baseMetadata.ImageOrientationPatient || '1\\0\\0\\0\\1\\0',
+                  ImageOrientationPatient: orientationArray.join('\\'),
+                  ImageOrientationPatientNumeric: orientationArray,
                   NumberOfFrames: numberOfFrames,
                   FrameNumber: frameIndex + 1,
                   TemporalPositionIndex: temporalPositionIndex,
                   FrameTime: baseMetadata.FrameTime,
                   FrameTimeVector: baseMetadata.FrameTimeVector,
+                  FrameTimeVectorNumeric: baseMetadata.FrameTimeVectorNumeric,
                   RowPixelSpacing: rowPixelSpacing,
                   ColumnPixelSpacing: columnPixelSpacing,
                   PixelSpacing: `${rowPixelSpacing}\\${columnPixelSpacing}`,
+                  PixelSpacingNumeric: [rowPixelSpacing, columnPixelSpacing],
                 };
+
+                if (!instanceMetadata.modalityLutModule) {
+                  const slope = parseFloat(baseMetadata.RescaleSlope);
+                  const intercept = parseFloat(baseMetadata.RescaleIntercept);
+                  instanceMetadata.modalityLutModule = {
+                    rescaleSlope: Number.isFinite(slope) ? slope : 1,
+                    rescaleIntercept: Number.isFinite(intercept) ? intercept : 0,
+                    rescaleType: baseMetadata.RescaleType || undefined,
+                    scaled: false,
+                  };
+                } else if (instanceMetadata.modalityLutModule && typeof instanceMetadata.modalityLutModule.scaled === 'undefined') {
+                  instanceMetadata.modalityLutModule = {
+                    ...instanceMetadata.modalityLutModule,
+                    scaled: false,
+                  };
+                }
 
                 const instanceWithImageId = {
                   ...instanceMetadata,
                   imageId: frameImageId,
                 };
+
+                ensureModalityLutModule(instanceWithImageId);
 
                 instancesPerSeries[seriesUID].push(instanceWithImageId);
 

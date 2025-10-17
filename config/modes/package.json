@@ -1,0 +1,15 @@
+{
+  "name": "@ohif/mode-xnat",
+  "version": "1.0.0",
+  "description": "XNAT viewer mode with project selector and cache management",
+  "author": "OHIF",
+  "license": "MIT",
+  "main": "src/index.js",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

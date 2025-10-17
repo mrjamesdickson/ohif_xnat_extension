@@ -15,7 +15,8 @@
     "build": "npm run build:copy",
     "build:copy": "rm -rf dist && mkdir -p dist && cp -r src/* dist/",
     "dev": "npm run build:copy",
-    "test": "node test-xnat-connection.js",
+    "test": "node --test tests/*.mjs",
+    "test:connection": "node test-xnat-connection.js",
     "prepublishOnly": "npm run build"
   },
   "publishConfig": {

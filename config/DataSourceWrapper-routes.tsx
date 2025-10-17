@@ -151,11 +151,38 @@ function DataSourceWrapper(props: withAppTypes) {
     async function getData() {
       setIsLoading(true);
       log.time(Enums.TimingEnum.SEARCH_TO_LIST);
+      console.log('[XNAT] /routes fetching studies with filters:', queryFilterValues);
       const studies = await dataSource.query.studies.search(queryFilterValues);
+      console.log('[XNAT] /routes received studies count:', studies?.length);
+      let filteredStudies = studies || [];
+      const studyUIDFilterRaw = queryFilterValues.StudyInstanceUIDs;
+      if (studyUIDFilterRaw) {
+        const studyUIDFilter = Array.isArray(studyUIDFilterRaw)
+          ? studyUIDFilterRaw
+          : [studyUIDFilterRaw];
+        const uidSet = new Set(
+          studyUIDFilter
+            .map(uid => (uid ?? '').toString().trim())
+            .filter(uid => uid.length > 0)
+        );
+        if (uidSet.size > 0) {
+          console.log('Filtering studies by UIDs:', Array.from(uidSet));
+          filteredStudies = filteredStudies.filter(study => {
+            const candidateUID =
+              study?.StudyInstanceUID || study?.studyInstanceUid || study?.studyInstanceUID;
+            const match = candidateUID && uidSet.has(candidateUID.toString().trim());
+            if (!match) {
+              console.log('[XNAT] /routes hiding study UID:', candidateUID);
+            }
+            return match;
+          });
+          console.log('[XNAT] /routes filtered studies count:', filteredStudies.length);
+        }
+      }
 
       setData({
-        studies: studies || [],
-        total: studies.length,
+        studies: filteredStudies,
+        total: filteredStudies.length,
         resultsPerPage: queryFilterValues.resultsPerPage,
         pageNumber: queryFilterValues.pageNumber,
         location,
@@ -258,6 +285,8 @@ function _getQueryFilterValues(query, queryLimit) {
   const pageNumber = _tryParseInt(query.get('pagenumber'), 1);
   const resultsPerPage = _tryParseInt(query.get('resultsperpage'), 25);
 
+  const studyInstanceUIDsParam = query.get('studyinstanceuids');
+
   const queryFilterValues = {
     // DCM
     patientId: query.get('mrn'),
@@ -277,6 +306,11 @@ function _getQueryFilterValues(query, queryLimit) {
     // Offset...
     offset: Math.floor((pageNumber * resultsPerPage) / queryLimit) * (queryLimit - 1),
     config: query.get('configurl'),
+    StudyInstanceUIDs: studyInstanceUIDsParam
+      ? studyInstanceUIDsParam.includes(',')
+        ? studyInstanceUIDsParam.split(',').map(uid => uid.trim()).filter(Boolean)
+        : studyInstanceUIDsParam
+      : undefined,
   };
 
   // patientName: good

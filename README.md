@@ -1,235 +1,103 @@
 # OHIF XNAT Data Source Extension
 
-An OHIF extension that enables pulling and displaying DICOM images from remote XNAT instances.
+An OHIF v3 extension that enables loading and displaying DICOM images from XNAT imaging archives using HTTP Range requests for efficient metadata extraction.
 
 ## Quick Start
 
 ```bash
-# 1. Configure XNAT credentials interactively
-./setup-config.sh
+# 1. Stop any running dev server
+lsof -ti:3000 | xargs kill -9 2>/dev/null || true
 
-# 2. Build and deploy to your OHIF installation
-./build-and-deploy.sh /path/to/ohif-viewer --restart
+# 2. Deploy (rebuilds plugin, clears caches, starts server)
+./deploy.sh
 
-# This command will:
-# - Build the extension
-# - Link it using npm link
-# - Apply necessary hotfixes
-# - Update pluginConfig.json
-# - Start the dev server with webpack (APP_CONFIG=config/xnat.js yarn run dev)
+# 3. Clear browser cache (DevTools > Application > Storage > Clear site data)
+#    Then hard refresh (Cmd+Shift+R on Mac, Ctrl+Shift+F5 on Windows)
+
+# 4. Access at http://localhost:3000 (XNAT config is now default)
 ```
 
-**Alternative: Deploy without restarting server:**
-```bash
-./build-and-deploy.sh /path/to/ohif-viewer
+The deploy script:
+- Rebuilds the plugin from `src/` to `dist/`
+- Copies to `../ohif_viewer/node_modules/@ohif/extension-xnat-datasource/dist/`
+- Makes XNAT config the default (backs up original to `default.js.bak`)
+- Clears ALL webpack caches to prevent stale code
+- Stops old dev server and starts fresh one
 
-# Then manually start OHIF with auto-generated config
-cd /path/to/ohif-viewer/platform/app
-APP_CONFIG=config/xnat.js yarn run dev
-```
-
-The setup script will guide you through configuring your XNAT connection. The deployment script then automatically creates a ready-to-use `xnat.js` configuration file.
-
-**Alternative:** Manually create `.env` file:
-```bash
-cp .env.example .env
-# Edit .env with your XNAT URL and credentials
-```
+**⚠️ CRITICAL**: Always stop the server BEFORE deploying. Running `deploy.sh` while server is active will serve stale cached code.
 
 ## Features
 
-- Connect to remote XNAT instances
-- Browse projects, subjects, experiments, and scans
-- Retrieve and display DICOM images in OHIF Viewer
-- Support for both basic authentication and token-based authentication
-- Automatic metadata extraction and mapping to DICOM standards
-- **Retrieves actual DICOM SeriesInstanceUID from XNAT metadata** - Uses real DICOM UIDs for proper cross-system compatibility, with automatic fallback to generated UIDs if metadata is unavailable
+- **HTTP Range Request Metadata Extraction**: Fetches only first 64KB of DICOM files for efficient header parsing
+- **Project Filtering**: UI components for selecting XNAT projects with localStorage persistence
+- **Cache Management**: 512MB DICOM file cache with LRU eviction and UI controls
+- **Real DICOM UIDs**: Extracts actual SeriesInstanceUID and StudyInstanceUID from file headers
+- **Multi-frame Support**: Handles 4D volumes with proper frame expansion and position calculation
+- **Shared Experiments**: Correctly handles experiments shared across multiple XNAT projects
+- **Basic and Token Auth**: Supports both authentication methods with secure credential handling
 
 ## Installation
 
-### Quick Deploy (Recommended for OHIF Monorepo)
+This extension is designed for local development with an OHIF viewer instance. It assumes you have:
+- OHIF viewer cloned at `../ohif_viewer` (relative to this repo)
+- Node.js and npm installed
+- Access to an XNAT instance (tested with demo02.xnatworks.io)
 
-Use the build and deployment script to automatically build and install the extension:
+### Configuration
 
-```bash
-./build-and-deploy.sh /path/to/your/ohif-viewer
-```
+Edit `config/app-config-xnat.js` with your XNAT credentials:
 
-This script will:
-- Install extension dependencies
-- Build the extension
-- Copy the extension to `extensions/xnat-datasource`
-- Install dependencies in OHIF context
-- Create example configuration
-- Rebuild OHIF workspace
-
-### Manual Installation
-
-```bash
-npm install @ohif/extension-xnat-datasource
-```
-
-Or add to your OHIF Viewer's package.json:
-
-```json
+```javascript
 {
-  "dependencies": {
-    "@ohif/extension-xnat-datasource": "^1.0.0"
-  }
+  xnatUrl: 'https://demo02.xnatworks.io',
+  username: 'your-username',
+  password: 'your-password',
+  // OR use token auth:
+  // token: 'your-api-token'
 }
 ```
 
-## Configuration
+### Deployment Script
 
-### Automated Configuration (Recommended)
+The `deploy.sh` script handles the complete deployment workflow. See CLAUDE.md for detailed deployment instructions and troubleshooting.
 
-The easiest way to configure XNAT credentials is using the interactive setup script or a `.env` file:
+## UI Features
 
-#### Option A: Interactive Setup (Easiest)
+### Project Selector
+Click the "Select Project" button in the toolbar to switch between XNAT projects. Selection is persisted to localStorage.
 
-```bash
-./setup-config.sh
-```
-
-This script will guide you through all configuration options and create the `.env` file for you.
-
-#### Option B: Manual `.env` File
-
-1. **Create `.env` file:**
-```bash
-cp .env.example .env
-```
-
-2. **Edit `.env` with your XNAT details:**
-```bash
-# XNAT Server URL (required)
-XNAT_URL=https://your-xnat-instance.org
-
-# Authentication Method 1: Username & Password
-XNAT_USERNAME=your_username
-XNAT_PASSWORD=your_password
-
-# OR Authentication Method 2: API Token (recommended)
-# XNAT_TOKEN=your_api_token
-
-# Optional settings
-XNAT_FRIENDLY_NAME=My XNAT Server
-XNAT_TIMEOUT=30000
-```
-
-3. **Deploy with auto-configuration:**
-```bash
-./build-and-deploy.sh /path/to/ohif-viewer
-```
-
-This will automatically generate a configured `public/config/xnat.js` file in your OHIF installation.
-
-4. **Start OHIF using the auto-generated config:**
-```bash
-cd /path/to/ohif-viewer
-APP_CONFIG=xnat yarn run dev
-```
-
-### Manual Configuration
-
-#### Basic Authentication
-
-Create or update your OHIF configuration file (e.g., `app-config.js`):
-
-```javascript
-window.config = {
-  extensions: [
-    '@ohif/extension-xnat-datasource'
-  ],
-  dataSources: [
-    {
-      namespace: '@ohif/extension-xnat-datasource',
-      sourceName: 'xnat',
-      configuration: {
-        xnatUrl: 'https://your-xnat-instance.org',
-        username: 'your-username',
-        password: 'your-password'
-      }
-    }
-  ],
-  defaultDataSourceName: 'xnat'
-};
-```
-
-### Token-Based Authentication
-
-For enhanced security, use token-based authentication:
-
-```javascript
-window.config = {
-  extensions: [
-    '@ohif/extension-xnat-datasource'
-  ],
-  dataSources: [
-    {
-      namespace: '@ohif/extension-xnat-datasource',
-      sourceName: 'xnat',
-      configuration: {
-        xnatUrl: 'https://your-xnat-instance.org',
-        token: 'your-api-token'
-      }
-    }
-  ],
-  defaultDataSourceName: 'xnat'
-};
-```
+### Cache Management
+Click the "Cache Info" button to view DICOM cache statistics and clear the cache.
 
 ## Usage
 
-### Starting OHIF with XNAT Extension
-
-1. Install dependencies:
-```bash
-npm install
-```
-
-2. Configure your XNAT connection in the config file
-
-3. Build and start OHIF:
-```bash
-npm run build
-npm run serve
-```
-
-4. Access OHIF in your browser and browse XNAT studies
-
-### Query Parameters
-
-You can filter studies using query parameters:
-
-- `PatientName` - Filter by patient name
-- `StudyDate` - Filter by study date
-- Custom XNAT fields
-
-Example URL:
-```
-http://localhost:3000/?StudyInstanceUID=EXPERIMENT_ID
-```
+After deploying with `./deploy.sh`, navigate to `http://localhost:3000`. The XNAT config is automatically set as default. Select a project from the dropdown and click on a study to view scans.
 
 ## Architecture
 
 ### Components
 
-1. **XNATClient** - Handles communication with XNAT REST API
-   - Authentication (Basic and Token)
-   - Project/Subject/Experiment/Scan retrieval
-   - DICOM file download
-   - DICOM metadata retrieval for actual SeriesInstanceUID values
+1. **XNATClient** (`src/XNATClient.js`) - XNAT REST API client
+   - HTTP Range requests for DICOM header extraction (first 64KB only)
+   - Extracts 15+ DICOM tags including SeriesInstanceUID, StudyInstanceUID
+   - Project-aware experiment resolution for shared data
+   - Concurrency-limited batch metadata fetching
 
-2. **XNATDataSource** - OHIF data source implementation
-   - Study querying and retrieval
-   - Metadata mapping to DICOM format
-   - Integration with OHIF metadata store
+2. **XNATDataSource** (`src/XNATDataSource.js`) - OHIF data source
+   - Study/series querying with project filtering
+   - Multi-frame volume expansion into individual instances
+   - DicomMetadataStore population with proper UIDs
+   - Project filter persistence via localStorage
 
-3. **XNATImageLoader** - Cornerstone image loader
-   - Custom `xnat:` URL scheme
-   - DICOM parsing and image rendering
-   - Authentication header injection
+3. **XNATImageLoader** (`src/XNATImageLoader.js`) - Cornerstone image loader
+   - Custom `xnat:` URL scheme handler
+   - 512MB DICOM file cache with LRU eviction
+   - Multi-frame image support with frame-specific pixel data extraction
+   - Metadata provider for Cornerstone image plane/pixel/VOI modules
+
+4. **UI Components** (`src/components/`)
+   - `XNATProjectSelector.jsx` - Project dropdown with reload
+   - `XNATCacheInfo.jsx` - Cache statistics and clear button
 
 ### Data Flow
 
@@ -250,12 +118,10 @@ Cornerstone (Display)
 ## XNAT API Endpoints Used
 
 - `/data/projects` - List all projects
-- `/data/projects/{project}/subjects` - List subjects in a project
-- `/data/projects/{project}/subjects/{subject}/experiments` - List experiments
-- `/data/experiments/{experiment}/scans` - List scans in an experiment
-- `/data/experiments/{experiment}/scans/{scan}/resources/DICOM/files` - List DICOM files
-- `/data/experiments/{experiment}/scans/{scan}/resources/DICOM/metadata` - Get DICOM metadata including SeriesInstanceUID
-- File download endpoints for DICOM retrieval
+- `/data/experiments?UID={studyUID}&project={project}` - Resolve DICOM StudyInstanceUID to XNAT experiment
+- `/data/experiments/{id}/scans` - List scans
+- `/data/experiments/{id}/scans/{scan}/files` - List DICOM files
+- `/data/experiments/{id}/scans/{scan}/resources/{resource}/files/{file}` - Download DICOM with HTTP Range support
 
 ## Development
 
@@ -264,88 +130,51 @@ Cornerstone (Display)
 ```
 .
 ├── src/
-│   ├── index.js              # Main extension entry point
-│   ├── init.js               # Extension initialization
-│   ├── XNATClient.js         # XNAT REST API client
-│   ├── XNATDataSource.js     # OHIF data source implementation
-│   └── XNATImageLoader.js    # Cornerstone image loader
+│   ├── index.js                    # Extension entry point
+│   ├── init.js                     # Preregistration and initialization
+│   ├── XNATClient.js               # XNAT REST API client with HTTP Range support
+│   ├── XNATDataSource.js           # OHIF data source with project filtering
+│   ├── XNATImageLoader.js          # Cornerstone image loader with caching
+│   ├── XNATImageLoader.utils.js    # Image loader utility functions
+│   └── components/
+│       ├── XNATProjectSelector.jsx # Project selection UI
+│       └── XNATCacheInfo.jsx       # Cache management UI
 ├── config/
-│   ├── xnat-config.example.json
-│   └── xnat-config-token.example.json
-├── examples/
-│   └── app-config.js         # Example OHIF configuration
-├── setup-config.sh           # Interactive configuration setup
-├── build-and-deploy.sh       # Build and deployment script
-├── .env.example              # Environment variables template
+│   ├── app-config-xnat.js          # OHIF app configuration
+│   ├── modes/
+│   │   ├── xnat-mode.js            # XNAT mode with toolbar buttons
+│   │   └── package.json            # Mode package metadata
+│   ├── DataSourceWrapper.tsx       # Data source routing
+│   └── DataSourceWrapper-routes.tsx
+├── tests/                          # Unit tests
+├── deploy.sh                       # Local deployment script
+├── verify-deploy.sh                # Deployment verification
+├── CLAUDE.md                       # AI assistant development guide
 ├── package.json
-├── README.md
-└── INTEGRATION.md            # Detailed integration guide
-```
-
-### Building
-
-Build the extension:
-
-```bash
-npm run build
-```
-
-Or use the all-in-one build and deploy script:
-
-```bash
-./build-and-deploy.sh /path/to/ohif-viewer
+└── README.md
 ```
 
 ### Local Development
 
-**Recommended: Use build-and-deploy.sh for live development:**
+See `CLAUDE.md` for detailed development workflow and deployment instructions. Key points:
 
-```bash
-# Deploy with npm link (automatically builds, links, and starts server)
-./build-and-deploy.sh /path/to/ohif-viewer --restart
-```
-
-The dev server will run with:
-- **Command:** `APP_CONFIG=config/xnat.js yarn run dev` (uses webpack)
-- **Working directory:** `/path/to/ohif-viewer/platform/app`
-- **Logs:** `/tmp/ohif-dev.log`
-
-**Alternative: Manual development workflow:**
-
-```bash
-# Watch for changes and rebuild
-npm run dev
-
-# In another terminal, start OHIF
-cd /path/to/ohif-viewer
-yarn run dev
-```
+- Always stop server before deploying: `lsof -ti:3000 | xargs kill -9 2>/dev/null || true`
+- Deploy with: `./deploy.sh`
+- Clear browser cache after every deploy (DevTools > Application > Storage > Clear site data)
+- Hard refresh: Cmd+Shift+R (Mac) or Ctrl+Shift+F5 (Windows)
 
 ### Testing
 
-**Quick test:**
 ```bash
-# Automated connection test (requires .env file)
-node test-xnat-connection.js
+# Run unit tests
+npm test
+
+# Test DICOM header extraction
+node tests/fetchDicomHeader.test.mjs
+
+# Verify deployment
+./verify-deploy.sh
 ```
-
-This will verify:
-- XNAT connectivity
-- Authentication
-- Available projects, subjects, experiments
-- Provides test URLs for OHIF
-
-**Manual test in OHIF:**
-```bash
-# Start OHIF with XNAT config
-cd /path/to/ohif-viewer
-APP_CONFIG=xnat yarn run dev
-
-# Open in browser with experiment ID
-# http://localhost:3000/?StudyInstanceUID=EXPERIMENT_ID
-```
-
-**See [TESTING.md](TESTING.md) for comprehensive testing guide.**
 
 ## Troubleshooting
 

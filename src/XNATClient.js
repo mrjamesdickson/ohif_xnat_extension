@@ -122,37 +122,197 @@ class XNATClient {
   }
 
   /**
-   * Get DICOM metadata for a scan from XNAT using dicomdump service
-   * This retrieves actual DICOM tags including SeriesInstanceUID
+   * Get DICOM metadata for a scan by fetching the first DICOM file's header
+   * Uses HTTP Range request for efficiency
    */
   async getScanDicomMetadata(experimentId, scanId, projectId) {
     try {
-      // Use XNAT's dicomdump service for better metadata extraction
-      const src = `/archive/projects/${projectId}/experiments/${experimentId}/scans/${scanId}`;
-      const response = await this.client.get(
-        `/REST/services/dicomdump`,
-        {
-          params: {
-            src: src,
-            format: 'json'
-          }
-        }
-      );
+      console.log(`🔍 getScanDicomMetadata: experimentId=${experimentId}, scanId=${scanId}, projectId=${projectId}`);
 
-      // dicomdump returns DICOM tags in a different format
-      const dicomData = response.data;
-
-      if (dicomData && typeof dicomData === 'object') {
-        console.log(`Retrieved DICOM metadata for scan ${scanId} via dicomdump`);
-        return dicomData;
+      // Get files for this scan
+      const files = await this.getScanFiles(experimentId, scanId);
+      if (!files || files.length === 0) {
+        console.warn(`⚠️ No files found for scan ${scanId}`);
+        return null;
       }
 
-      return null;
+      // Use first file to get scan-level metadata
+      const firstFile = files[0];
+      console.log(`🔍 Fetching scan metadata from first file: ${firstFile.Name}`);
+
+      const metadata = await this.getFileDicomMetadata({
+        projectId,
+        experimentId,
+        scanId,
+        file: firstFile
+      });
+
+      if (metadata?.ResultSet?.Result) {
+        console.log(`✅ Found ${metadata.ResultSet.Result.length} metadata tags for scan ${scanId}`);
+      } else {
+        console.warn(`⚠️ No metadata returned for scan ${scanId}`);
+      }
+
+      return metadata;
     } catch (error) {
-      console.error(`Error fetching DICOM metadata for scan ${scanId}:`, error.message);
-      // Return null instead of throwing - we'll fall back to generated UIDs
+      console.error(`❌ Error fetching DICOM metadata for scan ${scanId}:`, error.message);
       return null;
     }
+  }
+
+  /**
+   * Convert a /data URI returned by XNAT into a path usable with dicomdump (/archive)
+   * @param {string} uri - URI from XNAT file listing
+   * @returns {string|null} archive-compatible URI
+   */
+  _toArchivePath(uri) {
+    if (!uri) {
+      return null;
+    }
+
+    const sanitized = uri.split('?')[0];
+
+    if (sanitized.startsWith('/archive/')) {
+      return sanitized;
+    }
+
+    if (sanitized.startsWith('/data/archive/')) {
+      return sanitized.replace('/data', '');
+    }
+
+    if (sanitized.startsWith('/data/')) {
+      return sanitized.replace('/data', '/archive');
+    }
+
+    if (sanitized.startsWith('/REST/')) {
+      return sanitized;
+    }
+
+    return sanitized.startsWith('/')
+      ? `/archive${sanitized}`
+      : `/archive/${sanitized}`;
+  }
+
+  /**
+   * Fetch DICOM header directly from file using HTTP Range request
+   * More efficient than dicomdump - only downloads first 64KB (header only)
+   * @param {Object} params
+   * @param {string} params.projectId
+   * @param {string} params.experimentId
+   * @param {string} params.scanId
+   * @param {Object} params.file - File entry from XNAT file listing
+   * @returns {Promise<Object|null>}
+   */
+  async getFileDicomMetadata({ projectId, experimentId, scanId, file }) {
+    // Build path using resource ID from file.cat_ID
+    const resourceId = file?.cat_ID || 'DICOM';
+    const fileName = file?.Name;
+
+    if (!fileName) {
+      console.warn(`No file name found for file:`, file);
+      return null;
+    }
+
+    try {
+      const path = `/data/experiments/${experimentId}/scans/${scanId}/resources/${resourceId}/files/${fileName}`;
+
+      console.log(`🔍 Fetching DICOM header via HTTP Range: ${path.substring(0, 100)}...`);
+
+      // Fetch first 64KB using HTTP Range header (header only, not pixel data)
+      const response = await this.client.get(path, {
+        headers: {
+          'Range': 'bytes=0-65535'
+        },
+        responseType: 'arraybuffer'
+      });
+
+      console.log(`📊 HTTP ${response.status}, Content-Length: ${response.headers['content-length']}, Data size: ${response.data?.byteLength || 0}`);
+
+      const arrayBuffer = response.data;
+
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        console.warn(`⚠️ Empty response for ${fileName}`);
+        return null;
+      }
+      const dicomParser = await import('dicom-parser');
+      const byteArray = new Uint8Array(arrayBuffer);
+
+      // Parse with untilTag option to handle partial data (stops before pixel data)
+      // Tag (7FE0,0010) is Pixel Data - we don't need it for metadata
+      const dataSet = dicomParser.default.parseDicom(byteArray, {
+        untilTag: 'x7fe00010'
+      });
+
+      // Extract tags in same format as dicomdump for compatibility
+      const extractedData = {
+        ResultSet: {
+          Result: [
+            { tag1: '(0020,000E)', value: dataSet.string('x0020000e') }, // SeriesInstanceUID - CRITICAL
+            { tag1: '(0020,000D)', value: dataSet.string('x0020000d') }, // StudyInstanceUID - CRITICAL
+            { tag1: '(0020,0013)', value: dataSet.string('x00200013') }, // InstanceNumber
+            { tag1: '(0020,0032)', value: dataSet.string('x00200032') }, // ImagePositionPatient
+            { tag1: '(0020,0037)', value: dataSet.string('x00200037') }, // ImageOrientationPatient
+            { tag1: '(0028,0030)', value: dataSet.string('x00280030') }, // PixelSpacing
+            { tag1: '(0018,0050)', value: dataSet.string('x00180050') }, // SliceThickness
+            { tag1: '(0018,0088)', value: dataSet.string('x00180088') }, // SpacingBetweenSlices
+            { tag1: '(0020,1041)', value: dataSet.string('x00201041') }, // SliceLocation
+            { tag1: '(0008,0018)', value: dataSet.string('x00080018') }, // SOPInstanceUID
+            { tag1: '(0028,0008)', value: dataSet.string('x00280008') }, // NumberOfFrames
+            { tag1: '(0028,0009)', value: dataSet.string('x00280009') }, // FrameIncrementPointer
+            { tag1: '(0018,1063)', value: dataSet.string('x00181063') }, // FrameTime
+            { tag1: '(0018,1065)', value: dataSet.string('x00181065') }, // FrameTimeVector
+            { tag1: '(0020,9128)', value: dataSet.string('x00209128') }, // TemporalPositionIndex
+            { tag1: '(0028,0010)', value: dataSet.string('x00280010') }, // Rows
+            { tag1: '(0028,0011)', value: dataSet.string('x00280011') }, // Columns
+            { tag1: '(0020,0052)', value: dataSet.string('x00200052') }, // FrameOfReferenceUID
+            { tag1: '(0008,0032)', value: dataSet.string('x00080032') }, // AcquisitionTime
+            { tag1: '(0020,0012)', value: dataSet.string('x00200012') }, // AcquisitionNumber
+            { tag1: '(0020,0011)', value: dataSet.string('x00200011') }, // SeriesNumber
+          ].filter(item => item.value !== undefined)
+        }
+      };
+
+      console.log(`✅ Extracted ${extractedData.ResultSet.Result.length} DICOM tags via HTTP Range`);
+      return extractedData;
+    } catch (error) {
+      console.warn(`❌ Failed to fetch DICOM header for ${fileName}:`, error.message || error);
+      console.warn(`   Full error:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch dicomdump metadata for a list of scan files with limited concurrency
+   * @param {Object} params
+   * @param {string} params.projectId
+   * @param {string} params.experimentId
+   * @param {string} params.scanId
+   * @param {Array<Object>} params.files
+   * @param {number} [params.concurrency=5]
+   * @returns {Promise<Array<Object|null>>}
+   */
+  async getScanFilesDicomMetadata({ projectId, experimentId, scanId, files, concurrency = 5 }) {
+    if (!Array.isArray(files) || files.length === 0) {
+      return [];
+    }
+
+    const results = new Array(files.length).fill(null);
+
+    for (let index = 0; index < files.length; index += concurrency) {
+      const chunk = files.slice(index, index + concurrency);
+
+      const chunkResults = await Promise.all(
+        chunk.map(file =>
+          this.getFileDicomMetadata({ projectId, experimentId, scanId, file })
+        )
+      );
+
+      chunkResults.forEach((value, chunkOffset) => {
+        results[index + chunkOffset] = value;
+      });
+    }
+
+    return results;
   }
 
   /**
@@ -240,7 +400,57 @@ class XNATClient {
           const modality = this.getModalityFromXsiType(scan.xsiType);
 
           // Try to get actual DICOM metadata from XNAT (using projectId parameter)
+          console.log(`🔍 About to call getScanDicomMetadata for scan ${scan.ID}, experimentId=${experimentId}, projectId=${projectId}`);
           const dicomMetadata = await this.getScanDicomMetadata(experimentId, scan.ID, projectId);
+          console.log(`📥 getScanDicomMetadata returned for scan ${scan.ID}:`, dicomMetadata ? 'has data' : 'NULL');
+
+          const createTagValueGetter = (dicomData) => {
+            const results = dicomData?.ResultSet?.Result || [];
+            return (tagPattern) => {
+              const tag = results.find(item => item.tag1 === tagPattern);
+              return tag?.value || null;
+            };
+          };
+
+          const parseIntSafe = value => {
+            if (value === null || value === undefined || value === '') {
+              return null;
+            }
+            const parsed = parseInt(value, 10);
+            return Number.isNaN(parsed) ? null : parsed;
+          };
+
+          const parseFloatSafe = value => {
+            if (value === null || value === undefined || value === '') {
+              return null;
+            }
+            const parsed = parseFloat(value);
+            return Number.isNaN(parsed) ? null : parsed;
+          };
+
+          const parseNumberArray = value => {
+            if (!value || typeof value !== 'string') {
+              return null;
+            }
+            const parts = value
+              .split('\\')
+              .map(component => parseFloat(component))
+              .filter(num => !Number.isNaN(num));
+            return parts.length ? parts : null;
+          };
+
+          const computeNormalVector = orientation => {
+            if (!Array.isArray(orientation) || orientation.length !== 6) {
+              return null;
+            }
+            const rowCosines = orientation.slice(0, 3);
+            const colCosines = orientation.slice(3, 6);
+            return [
+              rowCosines[1] * colCosines[2] - rowCosines[2] * colCosines[1],
+              rowCosines[2] * colCosines[0] - rowCosines[0] * colCosines[2],
+              rowCosines[0] * colCosines[1] - rowCosines[1] * colCosines[0],
+            ];
+          };
 
           // Use actual DICOM UIDs if available, otherwise generate them
           let seriesInstanceUID;
@@ -267,23 +477,16 @@ class XNATClient {
 
           if (dicomMetadata) {
             // Extract DICOM tags from dicomdump format
-            // dicomdump returns ResultSet.Result array with tag1, value, desc
-            const results = dicomMetadata.ResultSet?.Result || [];
-
-            // Helper function to find tag value
-            const getTagValue = (tagPattern) => {
-              const tag = results.find(item => item.tag1 === tagPattern);
-              return tag?.value || null;
-            };
+            const getTagValue = createTagValueGetter(dicomMetadata);
 
             const actualSeriesUID = getTagValue('(0020,000E)');
             const actualStudyUID = getTagValue('(0020,000D)');
 
-            numberOfFrames = parseInt(getTagValue('(0028,0008)')) || 1;
+            numberOfFrames = parseIntSafe(getTagValue('(0028,0008)')) || 1;
             frameIncrementPointer = getTagValue('(0028,0009)');
-            frameTime = parseFloat(getTagValue('(0018,1063)')) || null;
+            frameTime = parseFloatSafe(getTagValue('(0018,1063)'));
             frameTimeVector = getTagValue('(0018,1065)');
-            temporalPositionIndex = parseInt(getTagValue('(0020,9128)')) || null;
+            temporalPositionIndex = parseIntSafe(getTagValue('(0020,9128)'));
 
             // Skip scan if missing SeriesInstanceUID
             if (!actualSeriesUID) {
@@ -300,17 +503,17 @@ class XNATClient {
               studyInstanceUID = actualStudyUID;
             }
 
-            seriesNumber = parseInt(getTagValue('(0020,0011)')) || parseInt(scan.ID) || 0;
+            seriesNumber = parseIntSafe(getTagValue('(0020,0011)')) || parseIntSafe(scan.ID) || 0;
             seriesDescription = getTagValue('(0008,103E)') || scan.series_description || scan.type || 'Unknown';
 
             // Extract geometric metadata for proper 3D reconstruction
             imageOrientation = getTagValue('(0020,0037)'); // ImageOrientationPatient
             imagePosition = getTagValue('(0020,0032)'); // ImagePositionPatient (first slice)
             pixelSpacing = getTagValue('(0028,0030)'); // PixelSpacing
-            sliceThickness = parseFloat(getTagValue('(0018,0050)'));
-            rows = parseInt(getTagValue('(0028,0010)'));
-            columns = parseInt(getTagValue('(0028,0011)'));
-            sliceLocation = parseFloat(getTagValue('(0020,1041)')) || 0;
+            sliceThickness = parseFloatSafe(getTagValue('(0018,0050)'));
+            rows = parseIntSafe(getTagValue('(0028,0010)'));
+            columns = parseIntSafe(getTagValue('(0028,0011)'));
+            sliceLocation = parseFloatSafe(getTagValue('(0020,1041)')) || 0;
             frameOfReferenceUID = getTagValue('(0020,0052)');
 
             // Warn about missing geometric fields but don't skip the scan
@@ -349,6 +552,74 @@ class XNATClient {
             return null;
           }
 
+          // Retrieve file-level dicom metadata to derive reliable ordering and slice geometry
+          console.log(`🔍 Scan ${scan.ID}: About to fetch file-level metadata for ${files.length} files`);
+          const fileLevelDicomMetadata = await this.getScanFilesDicomMetadata({
+            projectId,
+            experimentId,
+            scanId: scan.ID,
+            files
+          });
+          console.log(`📦 Scan ${scan.ID}: Retrieved file-level metadata, ${fileLevelDicomMetadata.filter(Boolean).length}/${files.length} successful`);
+
+          const parsedFileMetadata = fileLevelDicomMetadata.map((dicomData, fileIndex) => {
+            if (!dicomData) {
+              return null;
+            }
+
+            const getFileTagValue = createTagValueGetter(dicomData);
+
+            const instanceNumberValue = parseIntSafe(getFileTagValue('(0020,0013)'));
+            const imagePositionValue = getFileTagValue('(0020,0032)');
+            const imageOrientationValue = getFileTagValue('(0020,0037)');
+            const pixelSpacingValue = getFileTagValue('(0028,0030)');
+            const sliceThicknessValue = parseFloatSafe(getFileTagValue('(0018,0050)'));
+            const spacingBetweenSlicesValue = parseFloatSafe(getFileTagValue('(0018,0088)'));
+            const sliceLocationValue = parseFloatSafe(getFileTagValue('(0020,1041)'));
+            const sopInstanceUIDValue = getFileTagValue('(0008,0018)');
+            const numberOfFramesValue = parseIntSafe(getFileTagValue('(0028,0008)'));
+            const frameIncrementPointerValue = getFileTagValue('(0028,0009)');
+            const frameTimeValue = parseFloatSafe(getFileTagValue('(0018,1063)'));
+            const frameTimeVectorValue = getFileTagValue('(0018,1065)');
+            const temporalPositionIndexValue = parseIntSafe(getFileTagValue('(0020,9128)'));
+            const rowsValue = parseIntSafe(getFileTagValue('(0028,0010)'));
+            const columnsValue = parseIntSafe(getFileTagValue('(0028,0011)'));
+            const frameOfReferenceUIDValue = getFileTagValue('(0020,0052)');
+            const acquisitionTimeValue = getFileTagValue('(0008,0032)');
+            const acquisitionNumberValue = parseIntSafe(getFileTagValue('(0020,0012)'));
+            const seriesNumberValue = parseIntSafe(getFileTagValue('(0020,0011)'));
+
+            const imageOrientationArrayValue = parseNumberArray(imageOrientationValue);
+            const pixelSpacingArrayValue = parseNumberArray(pixelSpacingValue);
+            const frameTimeVectorArrayValue = parseNumberArray(frameTimeVectorValue);
+
+            return {
+              instanceNumber: instanceNumberValue,
+              imagePosition: imagePositionValue,
+              imagePositionArray: parseNumberArray(imagePositionValue),
+              imageOrientation: imageOrientationValue,
+              imageOrientationArray: imageOrientationArrayValue,
+              pixelSpacing: pixelSpacingValue,
+              pixelSpacingArray: pixelSpacingArrayValue,
+              sliceThickness: sliceThicknessValue,
+              spacingBetweenSlices: spacingBetweenSlicesValue,
+              sliceLocation: sliceLocationValue,
+              sopInstanceUID: sopInstanceUIDValue,
+              numberOfFrames: numberOfFramesValue,
+              frameIncrementPointer: frameIncrementPointerValue,
+              frameTime: frameTimeValue,
+              frameTimeVector: frameTimeVectorValue,
+              frameTimeVectorArray: frameTimeVectorArrayValue,
+              temporalPositionIndex: temporalPositionIndexValue,
+              rows: rowsValue,
+              columns: columnsValue,
+              frameOfReferenceUID: frameOfReferenceUIDValue,
+              acquisitionTime: acquisitionTimeValue,
+              acquisitionNumber: acquisitionNumberValue,
+              seriesNumber: seriesNumberValue,
+            };
+          });
+
           // Parse geometric data if available from dicomdump
           let orientationArray = null;
           let positionArray = null;
@@ -364,45 +635,174 @@ class XNATClient {
             spacingArray = pixelSpacing.split('\\').map(parseFloat);
           }
 
-          // First, create file objects with sorting indices
-          const filesWithMetadata = files.map((file, index) => {
-            const url = `${this.baseUrl}${file.URI}`;
+          const baseNormal = computeNormalVector(orientationArray);
 
-            // Extract instance number from filename
-            // Examples: "1-001.dcm", "IM0001", "slice_001.dcm", etc.
-            let instanceNum = index; // Default to array order
+          const compareNumeric = (aValue, bValue) => {
+            const aValid = Number.isFinite(aValue);
+            const bValid = Number.isFinite(bValue);
 
-            if (file.Name) {
-              // Try to extract numeric index from filename
-              const match = file.Name.match(/[-_]?(\d+)(?:\.dcm)?$/i);
-              if (match) {
-                instanceNum = parseInt(match[1]);
-              }
+            if (aValid && bValid) {
+              if (aValue < bValue) return -1;
+              if (aValue > bValue) return 1;
+              return 0;
             }
 
-            // Note: We can't get per-file FrameNumber or InstanceNumber from DICOM metadata
-            // without fetching each file individually. The dicomdump above only queries one file.
-            // So we rely on filename ordering or the order XNAT returns files.
+            if (aValid) return -1;
+            if (bValid) return 1;
+            return 0;
+          };
+
+          // Build file descriptors enriched with per-file metadata to enable deterministic sorting
+          const filesWithMetadata = files.map((file, index) => {
+            const url = `${this.baseUrl}${file.URI}`;
+            const perFileMeta = parsedFileMetadata[index] || {};
+
+            let instanceNum = perFileMeta.instanceNumber;
+            if (!Number.isFinite(instanceNum)) {
+              if (file.Name) {
+                const match = file.Name.match(/[-_]?(\d+)(?:\.dcm)?$/i);
+                if (match) {
+                  const parsedFromName = parseIntSafe(match[1]);
+                  if (parsedFromName !== null) {
+                    instanceNum = parsedFromName;
+                  }
+                }
+              }
+            }
+            if (!Number.isFinite(instanceNum)) {
+              instanceNum = index;
+            }
+
+            const sliceThicknessValue = perFileMeta.sliceThickness ?? sliceThickness;
+            const spacingBetweenSlicesValue = perFileMeta.spacingBetweenSlices ?? null;
+            const orientationForMetric = perFileMeta.imageOrientationArray || orientationArray;
+            const normalForMetric = computeNormalVector(orientationForMetric) || baseNormal;
+            const positionVector = perFileMeta.imagePositionArray || positionArray;
+            const pixelSpacingArray = perFileMeta.pixelSpacingArray || spacingArray;
+            const pixelSpacingStringValue = perFileMeta.pixelSpacing || (pixelSpacingArray ? pixelSpacingArray.join('\\') : pixelSpacing);
+            const frameTimeVectorArray = perFileMeta.frameTimeVectorArray || null;
+
+            let positionAlongNormal = null;
+            if (
+              normalForMetric &&
+              Array.isArray(positionVector) &&
+              positionVector.length === 3
+            ) {
+              positionAlongNormal =
+                positionVector[0] * normalForMetric[0] +
+                positionVector[1] * normalForMetric[1] +
+                positionVector[2] * normalForMetric[2];
+            }
 
             return {
               file,
               url,
               originalIndex: index,
               instanceNumber: instanceNum,
-              // FrameNumber would need to be extracted per-file, currently not available
+              imagePositionArray: perFileMeta.imagePositionArray,
+              orientationArray: orientationForMetric,
+              positionAlongNormal,
+              pixelSpacingArray,
+              pixelSpacingString: pixelSpacingStringValue,
+              sliceThicknessValue,
+              spacingBetweenSlicesValue,
+              sliceLocation: perFileMeta.sliceLocation ?? sliceLocation,
+              sopInstanceUID: perFileMeta.sopInstanceUID || null,
+              numberOfFrames: perFileMeta.numberOfFrames || numberOfFrames,
+              frameIncrementPointer: perFileMeta.frameIncrementPointer ?? frameIncrementPointer,
+              frameTime: perFileMeta.frameTime ?? frameTime,
+              frameTimeVector: perFileMeta.frameTimeVector ?? frameTimeVector,
+              frameTimeVectorArray,
+              temporalPositionIndexValue: perFileMeta.temporalPositionIndex ?? temporalPositionIndex,
+              frameOfReferenceUID: perFileMeta.frameOfReferenceUID || frameOfReferenceUID,
+              rowsValue: perFileMeta.rows || rows,
+              columnsValue: perFileMeta.columns || columns,
             };
           });
 
-          // Sort files by instance number to ensure correct anatomical ordering
-          // For 4D datasets with multi-frame files, frames within each file are handled
-          // later in XNATDataSource.js when processing NumberOfFrames
-          filesWithMetadata.sort((a, b) => a.instanceNumber - b.instanceNumber);
+          // Debug: Log first few files before sorting
+          console.log(`🔍 Scan ${scan.ID}: Before sorting, first 5 files:`, filesWithMetadata.slice(0, 5).map((f, idx) => ({
+            originalIndex: f.originalIndex,
+            instanceNumber: f.instanceNumber,
+            positionAlongNormal: f.positionAlongNormal,
+            imagePosition: f.imagePositionArray,
+            sliceLocation: f.sliceLocation,
+            temporalIndex: f.temporalPositionIndexValue,
+            fileName: f.file?.name || 'unknown'
+          })));
 
-          console.log(`Scan ${scan.ID}: sorted ${filesWithMetadata.length} files by instance number (first: ${filesWithMetadata[0]?.instanceNumber}, last: ${filesWithMetadata[filesWithMetadata.length-1]?.instanceNumber})`);
+          filesWithMetadata.sort((a, b) => {
+            const normalPositionComparison = compareNumeric(a.positionAlongNormal, b.positionAlongNormal);
+            if (normalPositionComparison !== 0) {
+              return normalPositionComparison;
+            }
+
+            const positionComparisonRaw = compareNumeric(
+              a.imagePositionArray?.[2],
+              b.imagePositionArray?.[2]
+            );
+            if (positionComparisonRaw !== 0) {
+              return positionComparisonRaw;
+            }
+
+            const sliceLocationComparison = compareNumeric(a.sliceLocation, b.sliceLocation);
+            if (sliceLocationComparison !== 0) {
+              return sliceLocationComparison;
+            }
+
+            const temporalComparison = compareNumeric(a.temporalPositionIndexValue, b.temporalPositionIndexValue);
+            if (temporalComparison !== 0) {
+              return temporalComparison;
+            }
+
+            const instanceComparison = compareNumeric(a.instanceNumber, b.instanceNumber);
+            if (instanceComparison !== 0) {
+              return instanceComparison;
+            }
+
+            return a.originalIndex - b.originalIndex;
+          });
+
+          // Debug: Log first few files after sorting
+          console.log(`✅ Scan ${scan.ID}: After sorting, first 5 files:`, filesWithMetadata.slice(0, 5).map((f, idx) => ({
+            sortedIndex: idx,
+            originalIndex: f.originalIndex,
+            instanceNumber: f.instanceNumber,
+            positionAlongNormal: f.positionAlongNormal,
+            imagePosition: f.imagePositionArray,
+            sliceLocation: f.sliceLocation,
+            temporalIndex: f.temporalPositionIndexValue,
+            fileName: f.file?.name || 'unknown'
+          })));
+
+          const firstPosition = filesWithMetadata[0]?.positionAlongNormal ?? filesWithMetadata[0]?.imagePositionArray?.[2];
+          const lastPosition = filesWithMetadata[filesWithMetadata.length - 1]?.positionAlongNormal ??
+            filesWithMetadata[filesWithMetadata.length - 1]?.imagePositionArray?.[2];
+
+          console.log(`Scan ${scan.ID}: sorted ${filesWithMetadata.length} files by ImagePositionPatient (first position: ${firstPosition}, last position: ${lastPosition})`);
 
           // Now create instances in the correct order
           const instances = filesWithMetadata.map((fileData, sortedIndex) => {
-            const { url, instanceNumber, actualSOPInstanceUID } = fileData;
+            const {
+              url,
+              instanceNumber,
+              sopInstanceUID,
+              imagePositionArray: perFilePositionArray,
+              orientationArray: perFileOrientationArray,
+              pixelSpacingString,
+              sliceThicknessValue,
+              frameIncrementPointer: perFileFrameIncrementPointer,
+              frameTime: perFileFrameTime,
+              frameTimeVector: perFileFrameTimeVector,
+              frameTimeVectorArray: perFileFrameTimeVectorArray,
+              numberOfFrames: perFileNumberOfFrames,
+              temporalPositionIndexValue,
+              frameOfReferenceUID: perFileFrameOfReferenceUID,
+              rowsValue,
+              columnsValue,
+              spacingBetweenSlicesValue,
+              sliceLocation: perFileSliceLocation,
+            } = fileData;
 
             if (sortedIndex === 0) {
               console.log(`Sample DICOM file URL for scan ${scan.ID}:`, url);
@@ -423,25 +823,33 @@ class XNATClient {
 
             // Calculate ImagePositionPatient for this slice using sortedIndex
             // Position changes along the normal vector (cross product of orientation vectors)
-            let instancePosition = positionArray;
-            if (positionArray && orientationArray && orientationArray.length === 6) {
-              // Calculate normal vector (cross product of row and column orientation)
-              const rowCosines = orientationArray.slice(0, 3);
-              const colCosines = orientationArray.slice(3, 6);
+            let instancePosition = perFilePositionArray || positionArray;
+            const orientationForInstance = perFileOrientationArray || orientationArray;
+
+            if ((!instancePosition || instancePosition.length !== 3) &&
+                orientationForInstance && orientationForInstance.length === 6 && positionArray) {
+              const rowCosines = orientationForInstance.slice(0, 3);
+              const colCosines = orientationForInstance.slice(3, 6);
               const normal = [
                 rowCosines[1] * colCosines[2] - rowCosines[2] * colCosines[1],
                 rowCosines[2] * colCosines[0] - rowCosines[0] * colCosines[2],
                 rowCosines[0] * colCosines[1] - rowCosines[1] * colCosines[0]
               ];
 
-              // Calculate position for this slice based on sorted index
-              const sliceOffset = sortedIndex * sliceThickness;
+              const sliceOffset = sortedIndex * (sliceThicknessValue ?? sliceThickness ?? 1);
               instancePosition = [
                 positionArray[0] + normal[0] * sliceOffset,
                 positionArray[1] + normal[1] * sliceOffset,
                 positionArray[2] + normal[2] * sliceOffset
               ];
             }
+
+            const pixelSpacingArray = parseNumberArray(pixelSpacingString) || spacingArray;
+            const thicknessForInstance = sliceThicknessValue ?? sliceThickness ?? 1;
+            const spacingBetweenSlicesForInstance = spacingBetweenSlicesValue ?? thicknessForInstance;
+            const frameOfReferenceForInstance = perFileFrameOfReferenceUID || frameOfReferenceUID;
+            const rowsForInstance = rowsValue || rows;
+            const columnsForInstance = columnsValue || columns;
 
             const metadata = {
               StudyInstanceUID: scanStudyInstanceUID,
@@ -451,37 +859,70 @@ class XNATClient {
               SeriesDate: scan.date || '',
               SeriesTime: '',
               InstanceNumber: instanceNumber,
-              SOPInstanceUID: actualSOPInstanceUID || `${seriesInstanceUID}.${sortedIndex + 1}`,
+              SOPInstanceUID: sopInstanceUID || `${seriesInstanceUID}.${sortedIndex + 1}`,
               SOPClassUID: SOPClassUID,
               Modality: modality,
-              NumberOfFrames: numberOfFrames,
-              FrameIncrementPointer: frameIncrementPointer,
-              FrameTime: frameTime,
-              FrameTimeVector: frameTimeVector,
-              TemporalPositionIndex: temporalPositionIndex,
-              Rows: rows,
-              Columns: columns,
-              FrameOfReferenceUID: frameOfReferenceUID,
+              NumberOfFrames: perFileNumberOfFrames || numberOfFrames,
+              FrameIncrementPointer: perFileFrameIncrementPointer ?? frameIncrementPointer,
+              FrameTime: perFileFrameTime ?? frameTime,
+              FrameTimeVector: perFileFrameTimeVector ?? frameTimeVector,
+              TemporalPositionIndex: temporalPositionIndexValue,
+              Rows: rowsForInstance,
+              Columns: columnsForInstance,
+              FrameOfReferenceUID: frameOfReferenceForInstance,
             };
 
             // Add geometric metadata if available from dicomdump
             // Convert arrays to DICOM format strings (backslash-separated)
-            if (orientationArray) {
-              metadata.ImageOrientationPatient = orientationArray.join('\\');
+            const orientationArrayForInstance = Array.isArray(orientationForInstance) ? orientationForInstance : null;
+            const orientationStringForInstance = orientationArrayForInstance ? orientationArrayForInstance.join('\\') : null;
+            const positionArrayForInstance = Array.isArray(instancePosition) ? instancePosition : null;
+            const positionStringForInstance = positionArrayForInstance ? positionArrayForInstance.join('\\') : null;
+            const pixelSpacingArrayForInstance = Array.isArray(pixelSpacingArray) ? pixelSpacingArray : null;
+            const pixelSpacingStringForInstance = pixelSpacingArrayForInstance ? pixelSpacingArrayForInstance.join('\\') : null;
+            const frameTimeVectorArrayForInstance = Array.isArray(perFileFrameTimeVectorArray)
+              ? perFileFrameTimeVectorArray
+              : Array.isArray(frameTimeVector)
+              ? frameTimeVector
+              : null;
+            const frameTimeVectorStringForInstance = frameTimeVectorArrayForInstance
+              ? frameTimeVectorArrayForInstance.join('\\')
+              : perFileFrameTimeVector ?? frameTimeVector;
+
+            if (orientationStringForInstance) {
+              metadata.ImageOrientationPatient = orientationStringForInstance;
             }
-            if (instancePosition) {
-              metadata.ImagePositionPatient = instancePosition.join('\\');
+            if (orientationArrayForInstance) {
+              metadata.ImageOrientationPatientNumeric = orientationArrayForInstance;
             }
-            if (spacingArray && spacingArray.length === 2) {
-              metadata.PixelSpacing = spacingArray.join('\\');
-              metadata.RowPixelSpacing = spacingArray[0];
-              metadata.ColumnPixelSpacing = spacingArray[1];
+
+            if (positionStringForInstance) {
+              metadata.ImagePositionPatient = positionStringForInstance;
             }
-            if (sliceThickness) {
-              metadata.SliceThickness = sliceThickness;
-              metadata.SpacingBetweenSlices = sliceThickness;
+            if (positionArrayForInstance) {
+              metadata.ImagePositionPatientNumeric = positionArrayForInstance;
             }
-            metadata.SliceLocation = sliceLocation + (sortedIndex * sliceThickness);
+
+            if (pixelSpacingStringForInstance) {
+              metadata.PixelSpacing = pixelSpacingStringForInstance;
+            }
+            if (pixelSpacingArrayForInstance && pixelSpacingArrayForInstance.length === 2) {
+              metadata.PixelSpacingNumeric = pixelSpacingArrayForInstance;
+              metadata.RowPixelSpacing = pixelSpacingArrayForInstance[0];
+              metadata.ColumnPixelSpacing = pixelSpacingArrayForInstance[1];
+            }
+
+            if (frameTimeVectorStringForInstance) {
+              metadata.FrameTimeVector = frameTimeVectorStringForInstance;
+            }
+            if (frameTimeVectorArrayForInstance) {
+              metadata.FrameTimeVectorNumeric = frameTimeVectorArrayForInstance;
+            }
+            if (thicknessForInstance) {
+              metadata.SliceThickness = thicknessForInstance;
+              metadata.SpacingBetweenSlices = spacingBetweenSlicesForInstance;
+            }
+            metadata.SliceLocation = perFileSliceLocation ?? (sliceLocation + (sortedIndex * (sliceThickness ?? 1)));
 
             return {
               url,
@@ -555,7 +996,7 @@ class XNATClient {
    * Search for studies matching query parameters
    * Uses direct /data/experiments API for better performance
    */
-  async searchForStudies(params = {}) {
+  async searchForStudies(params = {}, limit = 100) {
     try {
       // Support project filtering via AccessionNumber field (OHIF study list filter)
       // Default to 'test' project if no filter specified
@@ -564,7 +1005,7 @@ class XNATClient {
       console.log('Searching for XNAT experiments...', projectFilter ? `in project: ${projectFilter}` : 'all projects');
 
       // Get experiments directly - much faster than nested queries
-      const experiments = await this.getExperimentsAll(100, projectFilter);
+      const experiments = await this.getExperimentsAll(limit, projectFilter);
 
       console.log(`Found ${experiments.length} experiments from XNAT`);
 

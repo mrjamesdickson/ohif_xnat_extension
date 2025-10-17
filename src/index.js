@@ -1,6 +1,8 @@
 import createXNATDataSource from './XNATDataSource.js';
 import XNATImageLoader from './XNATImageLoader.js';
 import { registerImageLoader } from '@cornerstonejs/core';
+import XNATProjectSelector from './components/XNATProjectSelector';
+import XNATCacheInfo from './components/XNATCacheInfo';
 
 const EXTENSION_ID = '@ohif/extension-xnat-datasource';
 
@@ -62,10 +64,69 @@ function getDataSourcesModule() {
   return dataSources;
 }
 
+/**
+ * Get panel module for side panels
+ */
+function getPanelModule({ servicesManager }) {
+  return [
+    {
+      name: 'xnat-project-selector',
+      iconName: 'icon-xnat',
+      iconLabel: 'XNAT Project',
+      label: 'XNAT Project',
+      component: XNATProjectSelector,
+    },
+    {
+      name: 'xnat-cache-info',
+      iconName: 'icon-settings',
+      iconLabel: 'XNAT Cache',
+      label: 'XNAT Cache',
+      component: XNATCacheInfo,
+    },
+  ];
+}
+
+/**
+ * Get commands for toolbar actions
+ */
+function getCommandsModule({ servicesManager }) {
+  const { uiDialogService } = servicesManager.services;
+
+  return {
+    definitions: {
+      showXNATProjectSelector: {
+        commandFn: () => {
+          uiDialogService.create({
+            content: XNATProjectSelector,
+            contentProps: { servicesManager },
+            defaultPosition: 'center',
+          });
+        },
+        storeContexts: [],
+        options: {},
+      },
+      showXNATCacheInfo: {
+        commandFn: () => {
+          uiDialogService.create({
+            content: XNATCacheInfo,
+            contentProps: { servicesManager },
+            defaultPosition: 'center',
+          });
+        },
+        storeContexts: [],
+        options: {},
+      },
+    },
+    defaultContext: 'DEFAULT',
+  };
+}
+
 const extension = {
   id: EXTENSION_ID,
   preRegistration,
   getDataSourcesModule,
+  getPanelModule,
+  getCommandsModule,
 };
 
 console.log('XNAT Extension Loaded:', extension);
