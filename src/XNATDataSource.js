@@ -136,7 +136,22 @@ function ProjectSelectionDialog({ projects, defaultValue, onSubmit, onCancel, hi
 function createXNATDataSource(configuration = {}, servicesManager) {
   const config = configuration || {};
   console.log('createXNATDataSource called with config:', config);
-  const client = new XNATClient(config);
+
+  // Check for runtime credentials in memory (set by login dialog)
+  const runtimeCredentials = window.xnatCredentials;
+
+  // Use runtime credentials if available, otherwise fall back to config
+  const effectiveConfig = {
+    ...config,
+    xnatUrl: runtimeCredentials ? runtimeCredentials.url : config.xnatUrl,
+    username: runtimeCredentials ? runtimeCredentials.username : config.username,
+    password: runtimeCredentials ? runtimeCredentials.password : config.password,
+    token: runtimeCredentials ? null : config.token,
+  };
+
+  console.log('Using authentication:', runtimeCredentials ? 'Runtime credentials (from login popup)' : 'Config credentials');
+
+  const client = new XNATClient(effectiveConfig);
   const studySearchLimit = Number.isFinite(Number(config.studySearchLimit))
     ? Number(config.studySearchLimit)
     : Number.isFinite(Number(config.studyListLimit))
@@ -149,21 +164,26 @@ function createXNATDataSource(configuration = {}, servicesManager) {
   const services = servicesManager?.services || {};
   const uiDialogService = services.uiDialogService;
 
+  // Debug: Check what's actually in localStorage
+  const localStorageValue = typeof window !== 'undefined' ? localStorage.getItem(projectStorageKey) : null;
+  console.log('📦 localStorage value:', localStorageValue, 'for key:', projectStorageKey);
+
   const initialStoredProject =
     config.defaultProject ||
     (shouldRememberSelection ? getPersistedProject(projectStorageKey) : null);
 
   let currentProjectFilter = initialStoredProject || null;
+  console.log('🎯 Initial project filter:', currentProjectFilter, 'shouldRememberSelection:', shouldRememberSelection, 'config.defaultProject:', config.defaultProject);
   const metadataProvider = OHIFClasses.MetadataProvider;
 
   // Configure the XNAT image loader with credentials
   // Note: XNATImageLoader is imported at module level, but we configure it here
   // because it needs runtime configuration from the data source
   XNATImageLoader.configure({
-    xnatUrl: config.xnatUrl,
-    username: config.username,
-    password: config.password,
-    token: config.token,
+    xnatUrl: effectiveConfig.xnatUrl,
+    username: effectiveConfig.username,
+    password: effectiveConfig.password,
+    token: effectiveConfig.token,
   });
   console.log('✅ XNAT image loader configured with datasource credentials');
 
@@ -357,6 +377,17 @@ function createXNATDataSource(configuration = {}, servicesManager) {
 
   const initialize = async () => {
     try {
+      // Check if we have authentication
+      const hasBasicAuth = effectiveConfig.username && effectiveConfig.password;
+      const hasToken = effectiveConfig.token;
+
+      if (!hasBasicAuth && !hasToken) {
+        console.warn('⚠️ No authentication available yet, skipping initialization. Waiting for user login...');
+        // Don't throw error, just skip initialization
+        // The login dialog will handle authentication and trigger reload
+        return;
+      }
+
       const projects = await client.getProjects();
       console.log('XNAT connection successful');
       console.log(`📁 Available XNAT Projects (${projects.length}):`, projects.map(p => p.ID).join(', '));
@@ -373,19 +404,12 @@ function createXNATDataSource(configuration = {}, servicesManager) {
         console.table(projects.map(p => ({ ID: p.ID, Name: p.name || p.ID })));
       };
 
-      if (!currentProjectFilter) {
-        if (projects.length === 1) {
-          setProjectFilter(projects[0].ID);
-        } else {
-          const selectedProject = await promptForProjectSelection(projects);
-          if (selectedProject) {
-            setProjectFilter(selectedProject);
-          }
-        }
-      }
-
+      // Don't auto-prompt for project selection on init
+      // User can use the floating button to select a project manually
       if (currentProjectFilter) {
         console.log(`🎯 Default project filter applied: ${currentProjectFilter}`);
+      } else {
+        console.log(`💡 No project selected. Use the "📁 Select Project" button to choose a project.`);
       }
     } catch (error) {
       console.error('Failed to connect to XNAT:', error);
@@ -398,9 +422,37 @@ function createXNATDataSource(configuration = {}, servicesManager) {
    */
   const query = {
     studies: {
+      // Check authentication before any query
+      _checkAuth: () => {
+        const runtimeCreds = window.xnatCredentials;
+        const hasAuth = (runtimeCreds && runtimeCreds.username) ||
+                       (effectiveConfig.username && effectiveConfig.password) ||
+                       effectiveConfig.token;
+        if (!hasAuth) {
+          throw new Error('Please login first');
+        }
+      },
       mapParams: params => params,
       search: async (queryParams = {}) => {
         console.log('studies.search called with params:', queryParams);
+
+        // Check authentication first
+        const runtimeCreds = window.xnatCredentials;
+        const hasAuth = (runtimeCreds && runtimeCreds.username) ||
+                       (effectiveConfig.username && effectiveConfig.password) ||
+                       effectiveConfig.token;
+
+        if (!hasAuth) {
+          console.warn('⚠️ No authentication available, returning empty results');
+          return [];
+        }
+
+        // Check if a project is selected
+        if (!currentProjectFilter) {
+          console.warn('⚠️ No project selected. Use the "XNAT: Select Project" button to choose a project.');
+          return [];
+        }
+
         try {
           // If searching for specific StudyInstanceUIDs, return those
           if (queryParams.StudyInstanceUIDs) {
@@ -428,6 +480,7 @@ function createXNATDataSource(configuration = {}, servicesManager) {
 
           // Add current project filter if set
           const params = { ...queryParams };
+          console.log('🔍 Searching for studies with currentProjectFilter:', currentProjectFilter);
           if (currentProjectFilter) {
             params.AccessionNumber = currentProjectFilter;
           }

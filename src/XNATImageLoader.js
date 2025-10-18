@@ -132,6 +132,12 @@ export function loadImage(imageId) {
         'Content-Type': 'application/dicom',
       };
 
+      const axiosConfig = {
+        responseType: 'arraybuffer',
+        headers,
+        withCredentials: true, // Enable cookies for JSESSIONID
+      };
+
       if (config) {
         if (config.token) {
           headers['Authorization'] = `Bearer ${config.token}`;
@@ -146,10 +152,7 @@ export function loadImage(imageId) {
       }
 
       // Fetch the DICOM file
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer',
-        headers,
-      });
+      const response = await axios.get(url, axiosConfig);
 
       arrayBuffer = response.data;
 

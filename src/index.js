@@ -3,6 +3,7 @@ import XNATImageLoader from './XNATImageLoader.js';
 import { registerImageLoader } from '@cornerstonejs/core';
 import XNATProjectSelector from './components/XNATProjectSelector';
 import XNATCacheInfo from './components/XNATCacheInfo';
+import init from './init.js';
 
 const EXTENSION_ID = '@ohif/extension-xnat-datasource';
 
@@ -46,6 +47,10 @@ function preRegistration({ servicesManager, configuration = {} }) {
     };
     console.log('🟢 Cache utilities available: window.xnatImageCache.getStats(), window.xnatImageCache.clear()');
   }
+
+  // Call init function to set up login dialog
+  console.log('🟢 Calling init function from preRegistration');
+  init({ servicesManager, configuration });
 }
 
 /**
@@ -90,17 +95,32 @@ function getPanelModule({ servicesManager }) {
  * Get commands for toolbar actions
  */
 function getCommandsModule({ servicesManager }) {
-  const { uiDialogService } = servicesManager.services;
+  const { uiDialogService, uiNotificationService } = servicesManager.services;
 
   return {
     definitions: {
       showXNATProjectSelector: {
         commandFn: () => {
-          uiDialogService.create({
-            content: XNATProjectSelector,
-            contentProps: { servicesManager },
-            defaultPosition: 'center',
-          });
+          // Show project selector modal from init.js
+          if (window.showProjectSelectorModal) {
+            window.showProjectSelectorModal();
+          } else {
+            console.error('Project selector not available');
+          }
+        },
+        storeContexts: [],
+        options: {},
+      },
+      xnatLogout: {
+        commandFn: () => {
+          console.log('🚪 Logout command - clearing all data');
+
+          // Clear all storage
+          localStorage.clear();
+          sessionStorage.clear();
+
+          // Hard redirect to clear all cached data
+          window.location.href = window.location.origin + window.location.pathname + '?t=' + Date.now();
         },
         storeContexts: [],
         options: {},

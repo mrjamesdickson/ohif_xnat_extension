@@ -24,6 +24,7 @@ class XNATClient {
       headers: {
         'Content-Type': 'application/json',
       },
+      withCredentials: true,
     });
 
     // Setup authentication
@@ -36,6 +37,31 @@ class XNATClient {
       console.log('Using Basic authentication');
     } else {
       console.warn('No authentication credentials provided!');
+    }
+  }
+
+  /**
+   * Login to XNAT - browser will automatically handle JSESSIONID cookie
+   */
+  static async login(xnatUrl, username, password) {
+    try {
+      const response = await axios.post(
+        `${xnatUrl}/data/services/auth`,
+        null,
+        {
+          auth: {
+            username: username,
+            password: password
+          },
+          withCredentials: true
+        }
+      );
+
+      console.log('✅ Login successful, JSESSIONID cookie set by browser');
+      return true; // Browser handles cookie automatically
+    } catch (error) {
+      console.error('Login failed:', error);
+      throw new Error(`Login failed: ${error.response?.status} ${error.response?.statusText || error.message}`);
     }
   }
 
@@ -381,17 +407,22 @@ class XNATClient {
         throw new Error(`actualStudyInstanceUID parameter is required for getStudyMetadata (experiment ${experimentId}). Cannot proceed without actual DICOM StudyInstanceUID.`);
       }
 
-      console.log('getStudyMetadata called for experiment:', experimentId, `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...`, `project: ${projectId}`);
+      const startTime = performance.now();
+      console.log('⏱️ getStudyMetadata START for experiment:', experimentId, `with StudyInstanceUID: ${actualStudyInstanceUID.substring(0, 40)}...`, `project: ${projectId}`);
+
+      const scansStartTime = performance.now();
       const scans = await this.getScans(experimentId);
-      console.log(`Found ${scans.length} scans for experiment ${experimentId}`);
+      console.log(`⏱️ Fetched ${scans.length} scans in ${(performance.now() - scansStartTime).toFixed(0)}ms`);
 
       // Use provided StudyInstanceUID (no fallback)
       let studyInstanceUID = actualStudyInstanceUID;
 
+      const seriesStartTime = performance.now();
       const series = await Promise.all(
         scans.map(async scan => {
+          const scanStartTime = performance.now();
           const files = await this.getScanFiles(experimentId, scan.ID);
-          console.log(`Scan ${scan.ID} has ${files?.length || 0} files`);
+          console.log(`Scan ${scan.ID} has ${files?.length || 0} files (${(performance.now() - scanStartTime).toFixed(0)}ms)`);
 
           if (!files || files.length === 0) {
             return null;
@@ -941,9 +972,10 @@ class XNATClient {
           };
         })
       );
+      console.log(`⏱️ Processed all ${scans.length} scans in ${(performance.now() - seriesStartTime).toFixed(0)}ms`);
 
       const filteredSeries = series.filter(s => s !== null);
-      console.log(`Returning ${filteredSeries.length} series for experiment ${experimentId}`);
+      console.log(`⏱️ TOTAL getStudyMetadata time: ${(performance.now() - startTime).toFixed(0)}ms for ${filteredSeries.length} series`);
 
       return {
         StudyInstanceUID: studyInstanceUID,

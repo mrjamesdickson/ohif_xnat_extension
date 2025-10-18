@@ -56,14 +56,24 @@ echo "[deploy] Stopping any existing processes on port 3000..."
 lsof -ti:3000 | xargs kill -9 2>/dev/null || true
 sleep 2
 
-# step 3: Clear ALL webpack caches to prevent serving stale code
-echo "[deploy] Clearing webpack caches..."
+# Kill any orphaned node processes that might be serving old code
+echo "[deploy] Checking for orphaned node/webpack processes..."
+pkill -f "webpack-dev-server" 2>/dev/null || true
+pkill -f "webpack serve" 2>/dev/null || true
+sleep 1
+
+# step 3: Clear ALL webpack caches and build artifacts to prevent serving stale code
+echo "[deploy] Clearing webpack caches and build artifacts..."
 cd "$VIEWER_ROOT"
 rm -rf node_modules/.cache
 rm -rf platform/app/dist
 rm -rf platform/app/.cache
 rm -rf platform/app/node_modules/.cache
-echo "[deploy] ✓ Webpack caches cleared"
+rm -rf .cache
+# Clear browser cache artifacts
+rm -rf platform/app/public/service-worker.js
+rm -rf platform/app/public/workbox-*.js
+echo "[deploy] ✓ Webpack caches and build artifacts cleared"
 
 # step 3: start viewer dev server in background with nohup
 cd "$VIEWER_ROOT"
