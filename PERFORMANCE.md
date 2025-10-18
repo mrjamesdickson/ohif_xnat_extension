@@ -120,18 +120,26 @@ GET /data/experiments/{id}/scans/{scanId}/metadata/bulk
 - Impact: User sees results immediately, refinement happens in background
 - Complexity: Requires async metadata updates in OHIF
 
-## Recommended Immediate Action
+## Implemented Optimization (Oct 17, 2025)
 
-**Implement Option 1 (Lazy Loading) + Option 2 (Higher Concurrency)**
+**Option 2: Increased Concurrency from 5 → 20**
 
-1. Remove file-level metadata fetch from initial load
-2. Fetch only when series is viewed
-3. Increase concurrency to 20
-4. Add progress indicator
+Changed `getScanFilesDicomMetadata({ concurrency: 20 })` in XNATClient.js:320
+
+**Why not lazy loading?**
+- The image viewer requires ALL file metadata to display images correctly
+- Lazy loading would require significant refactoring of OHIF's metadata flow
+- Higher concurrency provides immediate 4x improvement with minimal risk
 
 **Expected improvement:**
-- Initial study view: 15s → 2s
-- Series click: 0s → 3s (acceptable since user initiated)
+- Before: 60+ seconds (4 scans, 503 files total, concurrency=5)
+- After: ~15-20 seconds (same data, concurrency=20)
+- **4x faster** with no functionality changes
+
+**Future optimizations:**
+- Option 1 (Lazy Loading): Load metadata only when series is viewed
+- Option 3 (Smart Caching): Cache metadata across page reloads
+- Option 4 (Bulk API): Request XNAT server enhancement for single-request metadata
 
 ## Monitoring
 

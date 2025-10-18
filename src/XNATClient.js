@@ -314,10 +314,10 @@ class XNATClient {
    * @param {string} params.experimentId
    * @param {string} params.scanId
    * @param {Array<Object>} params.files
-   * @param {number} [params.concurrency=5]
+   * @param {number} [params.concurrency=20]
    * @returns {Promise<Array<Object|null>>}
    */
-  async getScanFilesDicomMetadata({ projectId, experimentId, scanId, files, concurrency = 5 }) {
+  async getScanFilesDicomMetadata({ projectId, experimentId, scanId, files, concurrency = 20 }) {
     if (!Array.isArray(files) || files.length === 0) {
       return [];
     }
