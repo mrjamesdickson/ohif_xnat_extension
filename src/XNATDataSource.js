@@ -152,6 +152,22 @@ function createXNATDataSource(configuration = {}, servicesManager) {
   console.log('Using authentication:', runtimeCredentials ? 'Runtime credentials (from login popup)' : 'Config credentials');
 
   const client = new XNATClient(effectiveConfig);
+
+  // Expose cache utilities globally for debugging
+  if (typeof window !== 'undefined') {
+    window.xnatMetadataCache = {
+      getStats: () => {
+        const stats = client.getCacheStats();
+        console.log('📊 XNAT Metadata Cache Stats:', stats);
+        return stats;
+      },
+      clear: () => {
+        client.clearCache();
+        console.log('🗑️ XNAT Metadata cache cleared');
+      }
+    };
+  }
+
   const studySearchLimit = Number.isFinite(Number(config.studySearchLimit))
     ? Number(config.studySearchLimit)
     : Number.isFinite(Number(config.studyListLimit))

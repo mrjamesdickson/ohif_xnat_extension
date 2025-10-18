@@ -11,6 +11,10 @@ class XNATClient {
     this.password = config.password;
     this.token = config.token;
 
+    // Aggressive in-memory cache for DICOM file metadata
+    this.metadataCache = new Map();
+    this.cacheStats = { hits: 0, misses: 0, size: 0 };
+
     console.log('XNATClient config:', {
       baseUrl: this.baseUrl,
       hasUsername: !!this.username,
@@ -239,10 +243,22 @@ class XNATClient {
       return null;
     }
 
+    // Create cache key from the file path
+    const cacheKey = `${experimentId}/${scanId}/${resourceId}/${fileName}`;
+
+    // Check cache first
+    if (this.metadataCache.has(cacheKey)) {
+      this.cacheStats.hits++;
+      console.log(`💾 Cache HIT for ${fileName} (${this.cacheStats.hits} hits, ${this.cacheStats.misses} misses)`);
+      return this.metadataCache.get(cacheKey);
+    }
+
+    this.cacheStats.misses++;
+
     try {
       const path = `/data/experiments/${experimentId}/scans/${scanId}/resources/${resourceId}/files/${fileName}`;
 
-      console.log(`🔍 Fetching DICOM header via HTTP Range: ${path.substring(0, 100)}...`);
+      console.log(`🔍 Cache MISS - Fetching DICOM header via HTTP Range: ${path.substring(0, 100)}...`);
 
       // Fetch first 64KB using HTTP Range header (header only, not pixel data)
       const response = await this.client.get(path, {
@@ -299,12 +315,43 @@ class XNATClient {
       };
 
       console.log(`✅ Extracted ${extractedData.ResultSet.Result.length} DICOM tags via HTTP Range`);
+
+      // Store in cache
+      this.metadataCache.set(cacheKey, extractedData);
+      this.cacheStats.size = this.metadataCache.size;
+
       return extractedData;
     } catch (error) {
       console.warn(`❌ Failed to fetch DICOM header for ${fileName}:`, error.message || error);
       console.warn(`   Full error:`, error);
+
+      // Cache null results too to avoid repeated failed requests
+      this.metadataCache.set(cacheKey, null);
+      this.cacheStats.size = this.metadataCache.size;
+
       return null;
     }
+  }
+
+  /**
+   * Get cache statistics
+   */
+  getCacheStats() {
+    return {
+      ...this.cacheStats,
+      hitRate: this.cacheStats.hits + this.cacheStats.misses > 0
+        ? (this.cacheStats.hits / (this.cacheStats.hits + this.cacheStats.misses) * 100).toFixed(1) + '%'
+        : '0%'
+    };
+  }
+
+  /**
+   * Clear the metadata cache
+   */
+  clearCache() {
+    this.metadataCache.clear();
+    this.cacheStats = { hits: 0, misses: 0, size: 0 };
+    console.log('🗑️ Metadata cache cleared');
   }
 
   /**
