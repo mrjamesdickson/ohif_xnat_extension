@@ -119,8 +119,8 @@ function getCommandsModule({ servicesManager }) {
           localStorage.clear();
           sessionStorage.clear();
 
-          // Hard redirect to clear all cached data
-          window.location.href = window.location.origin + window.location.pathname + '?t=' + Date.now();
+          // Hard redirect to root path to clear all cached data
+          window.location.href = window.location.origin + '/?t=' + Date.now();
         },
         storeContexts: [],
         options: {},

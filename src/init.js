@@ -987,7 +987,8 @@ function addXNATToolbar() {
   logoutBtn.onclick = () => {
     localStorage.clear();
     sessionStorage.clear();
-    window.location.href = window.location.origin + window.location.pathname + '?t=' + Date.now();
+    // Redirect to root path with cache-busting timestamp
+    window.location.href = window.location.origin + '/?t=' + Date.now();
   };
 
   content.appendChild(projectBtn);
