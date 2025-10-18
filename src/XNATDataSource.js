@@ -521,8 +521,9 @@ function createXNATDataSource(configuration = {}, servicesManager) {
           console.log(`Using project: ${projectToUse} (filter: ${currentProjectFilter}, resolved: ${resolvedProjectId})`);
 
           // Get the study metadata which includes series, passing the original StudyInstanceUID and project ID
-          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId, projectToUse);
-          console.log('Study metadata for series search:', studyMetadata);
+          // For series list view, skip file-level metadata (only need scan-level for list display)
+          const studyMetadata = await client.getStudyMetadata(resolvedExperimentId, experimentId, projectToUse, { skipFileMetadata: true });
+          console.log('Study metadata for series search (series list mode):', studyMetadata);
 
           // Format series for OHIF WorkList
           const series = (studyMetadata?.series || []).map(s => ({
@@ -882,8 +883,9 @@ function createXNATDataSource(configuration = {}, servicesManager) {
         try {
           // Resolve DICOM UID to XNAT experiment ID and project ID
           const { experimentId, projectId } = await client.resolveStudyInstanceUID(StudyInstanceUID);
-          const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID, projectId);
-          console.log('Study metadata retrieved:', studyMetadata);
+          // For viewer mode, fetch ALL file metadata (skipFileMetadata: false is default)
+          const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID, projectId, { skipFileMetadata: false });
+          console.log('Study metadata retrieved (viewer mode - full metadata):', studyMetadata);
           return await formatSeriesMetadata(studyMetadata);
         } catch (error) {
           console.error('Error retrieving study:', error);

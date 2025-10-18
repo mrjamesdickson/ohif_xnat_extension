@@ -399,8 +399,11 @@ class XNATClient {
    * @param {string} experimentId - XNAT experiment ID
    * @param {string} actualStudyInstanceUID - Required actual DICOM StudyInstanceUID from study list
    * @param {string} projectId - XNAT project ID
+   * @param {Object} options - Optional parameters
+   * @param {boolean} options.skipFileMetadata - If true, only fetch scan-level metadata (faster for series list)
    */
-  async getStudyMetadata(experimentId, actualStudyInstanceUID, projectId) {
+  async getStudyMetadata(experimentId, actualStudyInstanceUID, projectId, options = {}) {
+    const { skipFileMetadata = false } = options;
     try {
       // Require actualStudyInstanceUID parameter
       if (!actualStudyInstanceUID) {
@@ -584,14 +587,20 @@ class XNATClient {
           }
 
           // Retrieve file-level dicom metadata to derive reliable ordering and slice geometry
-          console.log(`🔍 Scan ${scan.ID}: About to fetch file-level metadata for ${files.length} files`);
-          const fileLevelDicomMetadata = await this.getScanFilesDicomMetadata({
-            projectId,
-            experimentId,
-            scanId: scan.ID,
-            files
-          });
-          console.log(`📦 Scan ${scan.ID}: Retrieved file-level metadata, ${fileLevelDicomMetadata.filter(Boolean).length}/${files.length} successful`);
+          // Skip if skipFileMetadata is true (for series list view)
+          let fileLevelDicomMetadata = [];
+          if (skipFileMetadata) {
+            console.log(`⚡ Scan ${scan.ID}: Skipping file-level metadata fetch (${files.length} files) - series list mode`);
+          } else {
+            console.log(`🔍 Scan ${scan.ID}: Fetching file-level metadata for ${files.length} files - viewer mode`);
+            fileLevelDicomMetadata = await this.getScanFilesDicomMetadata({
+              projectId,
+              experimentId,
+              scanId: scan.ID,
+              files
+            });
+            console.log(`📦 Scan ${scan.ID}: Retrieved file-level metadata, ${fileLevelDicomMetadata.filter(Boolean).length}/${files.length} successful`);
+          }
 
           const parsedFileMetadata = fileLevelDicomMetadata.map((dicomData, fileIndex) => {
             if (!dicomData) {
