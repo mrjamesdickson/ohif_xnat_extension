@@ -888,8 +888,9 @@ function createXNATDataSource(configuration = {}, servicesManager) {
               console.log('🔄 Promise wrapper start() called for study:', StudyInstanceUID);
               // Resolve DICOM UID to XNAT experiment ID and project ID
               const { experimentId, projectId } = await client.resolveStudyInstanceUID(StudyInstanceUID);
-              const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID, projectId);
-              console.log('🔄 Study metadata retrieved in promise mode:', studyMetadata);
+              // For viewer mode, fetch ALL file metadata (skipFileMetadata: false is default)
+              const studyMetadata = await client.getStudyMetadata(experimentId, StudyInstanceUID, projectId, { skipFileMetadata: false });
+              console.log('🔄 Study metadata retrieved in promise mode (viewer mode - full metadata):', studyMetadata);
               return await formatSeriesMetadata(studyMetadata);
             }
           }];
