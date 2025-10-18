@@ -526,9 +526,9 @@ function showProjectSelectorModal() {
     `;
     document.body.appendChild(successMsg);
 
-    // Hard reload (bypass cache) to ensure fresh data
+    // Redirect to root page with cache-busting timestamp
     setTimeout(() => {
-      window.location.reload(true);
+      window.location.href = window.location.origin + '/?t=' + Date.now();
     }, 1000);
   };
 
